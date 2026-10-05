@@ -35,9 +35,9 @@ const uint POSITION_X_BITS = uint(SODIUM_POSITION_X_BITS);
 const uint POSITION_Y_BITS = uint(SODIUM_POSITION_Y_BITS);
 const uint POSITION_Z_BITS = uint(SODIUM_POSITION_Z_BITS);
 
-const uint POSITION_X_MASK    = (1u << POSITION_X_BITS) - 1u;
-const uint POSITION_Y_MASK    = (1u << POSITION_Y_BITS) - 1u;
-const uint POSITION_Z_MASK    = (1u << POSITION_Z_BITS) - 1u;
+const uint POSITION_X_MASK    = 1u << POSITION_X_BITS;
+const uint POSITION_Y_MASK    = 1u << POSITION_Y_BITS;
+const uint POSITION_Z_MASK    = 1u << POSITION_Z_BITS;
 
 const uint POSITION_Y_SHIFT   = POSITION_X_BITS;
 const uint POSITION_Z_SHIFT   = POSITION_X_BITS + POSITION_Y_BITS;

@@ -56,15 +56,15 @@ public record VertexPositionLayout(int xBits, int yBits, int zBits) {
 
     /** Largest value representable by the X field; likewise for the Y/Z variants. */
     public int getXMax() {
-        return (1 << this.xBits) - 1;
+        return 1 << this.xBits;
     }
 
     public int getYMax() {
-        return (1 << this.yBits) - 1;
+        return 1 << this.yBits;
     }
 
     public int getZMax() {
-        return (1 << this.zBits) - 1;
+        return 1 << this.zBits;
     }
 
     public int getTotalBits() {

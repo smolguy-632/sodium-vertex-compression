@@ -1,6 +1,9 @@
 name: Build and Release Sodium
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       platform:
@@ -11,9 +14,16 @@ on:
           - fabric
           - neoforge
         default: both
+      vertex-bits:
+        type: choice
+        description: "Chunk vertex position profile (original = 5/9/5, ideal = 9/9/9)"
+        options:
+          - original
+          - ideal
+        default: original
       release-type:
         type: choice
-        description: Release type (determines versioning)
+        description: Release type
         options:
           - nightly
           - alpha
@@ -21,142 +31,121 @@ on:
           - stable
         default: nightly
 
+env:
+  GRADLE_BUILD_COMMAND: build
+  MINECRAFT_VERSION: 26.3
+  MOD_VERSION: 0.9.3-alpha.1
+
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # needed for GitHub Releases
-      packages: read  # needed for Modrinth/CurseForge if needed
+      contents: write
 
     steps:
-      - name: Extract current branch name
-        shell: bash
-        run: |
-          ref="${GITHUB_REF#refs/heads/}"
-          echo "branch=${ref////-}" >> $GITHUB_OUTPUT
-          echo "ref=$ref" >> $GITHUB_OUTPUT
-        id: ref
-
       - name: Checkout sources
         uses: actions/checkout@v6
 
-      - name: Setup Java 21
+      # multiloader-base.gradle.kts sets JavaLanguageVersion.of(25) and options.release = 25
+      - name: Setup Java 25
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 25
           cache: gradle
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
-        with:
-          cache-read-only: false
-          cache-dir: ~/.gradle/cache
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Execute Gradle build (Fabric)
-        if: inputs.platform == 'both' || inputs.platform == 'fabric'
-        run: ./gradlew :fabric:build -Pbuild.release=false
-
-      - name: Execute Gradle build (NeoForge)
-        if: inputs.platform == 'both' || inputs.platform == 'neoforge'
-        run: ./gradlew :neoforge:build -Pbuild.release=false
-
-      - name: Assemble Fabric JAR
-        if: inputs.platform == 'both' || inputs.platform == 'fabric'
+      - name: Resolve build inputs
+        id: inputs
+        shell: bash
         run: |
-          mkdir -p fabric-artifacts
-          # Find the built jar from the fabric build
-          FABRIC_JAR=$(find . -name "*.jar" -path "*/fabric/*" -not -name "*-api*" -not -name "*-sources*" | head -1)
-          if [ -n "$FABRIC_JAR" ]; then
-            cp "$FABRIC_JAR" fabric-artifacts/sodium-fabric.jar
-            echo "fabric_jar_path=fabric-artifacts/sodium-fabric.jar" >> $GITHUB_OUTPUT
-          else
-            echo "No Fabric JAR found, checking common build..."
-            # Try common build
-            FABRIC_JAR=$(find . -name "sodium-fabric-*.jar" ! -path "*/.*" 2>/dev/null | head -1)
-            if [ -n "$FABRIC_JAR" ]; then
-              cp "$FABRIC_JAR" fabric-artifacts/sodium-fabric.jar
-              echo "fabric_jar_path=fabric-artifacts/sodium-fabric.jar" >> $GITHUB_OUTPUT
-            fi
+          # workflow_dispatch inputs are empty on push events; fall back to the repo default
+          platform="${{ inputs.platform }}"
+          if [[ -z "$platform" ]]; then platform="both"; fi
+
+          vertex_bits="${{ inputs.vertex-bits }}"
+          if [[ -z "$vertex_bits" ]]; then
+            vertex_bits="$(grep -E '^vertex\.bits=' gradle.properties | cut -d= -f2- | tr -d '[:space:]')"
+          fi
+          if [[ -z "$vertex_bits" ]]; then vertex_bits="original"; fi
+
+          release_type="${{ inputs.release-type }}"
+          if [[ -z "$release_type" ]]; then
+            if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then release_type="nightly"; else release_type="nightly"; fi
           fi
 
-      - name: Assemble NeoForge JAR
-        if: inputs.platform == 'both' || inputs.platform == 'neoforge'
+          echo "platform=${platform}" >> "$GITHUB_OUTPUT"
+          echo "vertex_bits=${vertex_bits}" >> "$GITHUB_OUTPUT"
+          echo "release_type=${release_type}" >> "$GITHUB_OUTPUT"
+
+      # The root 'build' task writes the final mod jars into build/mods/ (see README).
+      - name: Build (Fabric)
+        if: steps.inputs.outputs.platform == 'both' || steps.inputs.outputs.platform == 'fabric'
         run: |
-          mkdir -p neoforge-artifacts
-          # Find the built jar from the neoforge build
-          NEO_FORGE_JAR=$(find . -name "*.jar" -path "*/neoforge/*" -not -name "*-api*" -not -name "*-sources*" 2>/dev/null | head -1)
-          if [ -n "$NEO_FORGE_JAR" ]; then
-            cp "$NEO_FORGE_JAR" neoforge-artifacts/sodium-neoforge.jar
-            echo "neoforge_jar_path=neoforge-artifacts/sodium-neoforge.jar" >> $GITHUB_OUTPUT
-          else
-            echo "No NeoForge JAR found, checking common build..."
-            # Try common build
-            NEO_FORGE_JAR=$(find . -name "sodium-neoforge-*.jar" ! -path "*/.*" 2>/dev/null | head -1)
-            if [ -n "$NEO_FORGE_JAR" ]; then
-              cp "$NEO_FORGE_JAR" neoforge-artifacts/sodium-neoforge.jar
-              echo "neoforge_jar_path=neoforge-artifacts/sodium-neoforge.jar" >> $GITHUB_OUTPUT
-            fi
+          ./gradlew :fabric:build \
+            "$GRADLE_BUILD_COMMAND" \
+            -Pbuild.release=false \
+            -Pvertex.bits="${{ steps.inputs.outputs.vertex_bits }}"
+
+      - name: Build (NeoForge)
+        if: steps.inputs.outputs.platform == 'both' || steps.inputs.outputs.platform == 'neoforge'
+        run: |
+          ./gradlew :neoforge:build \
+            "$GRADLE_BUILD_COMMAND" \
+            -Pbuild.release=false \
+            -Pvertex.bits="${{ steps.inputs.outputs.vertex_bits }}"
+
+      - name: Collect JARs
+        id: collect
+        shell: bash
+        run: |
+          mkdir -p dist
+          shopt -s nullglob
+          jars=(build/mods/*.jar)
+          if [[ ${#jars[@]} -eq 0 ]]; then
+            echo "::error::No JARs produced in build/mods"
+            ls -la build/mods || true
+            exit 1
           fi
+          for j in "${jars[@]}"; do
+            [[ "$j" == *-sources.jar ]] && continue
+            cp "$j" "dist/$(basename "$j")"
+          done
+          shopt -u nullglob
+          ls -la dist
+          echo "### Built artifacts (vertex.bits=${{ steps.inputs.outputs.vertex_bits }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ls -1 dist >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload Fabric artifact
-        if: inputs.platform == 'both' || inputs.platform == 'fabric'
-        uses: actions/upload-artifact@v7
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: sodium-fabric-${{ steps.ref.outputs.branch }}
-          path: fabric-artifacts/sodium-fabric.jar
+          name: sodium-jars-${{ steps.inputs.outputs.vertex_bits }}
+          path: dist/*.jar
+          if-no-files-found: error
 
-      - name: Upload NeoForge artifact
-        if: inputs.platform == 'both' || inputs.platform == 'neoforge'
-        uses: actions/upload-artifact@v7
-        with:
-          name: sodium-neoforge-${{ steps.ref.outputs.branch }}
-          path: neoforge-artifacts/sodium-neoforge.jar
-
-      - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main'
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: sodium-${{ github.sha }}
-          name: "Sodium ${{ github.sha.substring(0, 7) }} Release"
+          name: Sodium ${{ env.MOD_VERSION }} (${{ steps.inputs.outputs.vertex_bits }})
           body: |
-            ## Sodium Mod Build
+            ## Sodium ${{ env.MOD_VERSION }}
 
-            Automated build of the Sodium mod for Minecraft ${build.config.minecraft_version}.
+            | | |
+            |---|---|
+            | Minecraft | ${{ env.MINECRAFT_VERSION }} |
+            | Vertex position profile | `${{ steps.inputs.outputs.vertex_bits }}` |
+            | Release type | ${{ steps.inputs.outputs.release_type }} |
+            | Commit | `${{ github.sha }}` |
 
-            ### Available Artifacts
-
-            - **Fabric**: [sodium-fabric.jar](https://github.com/CaffeineMC/sodium/releases/download/sodium-${{ github.sha }}/sodium-fabric.jar)
-            - **NeoForge**: [sodium-neoforge.jar](https://github.com/CaffeineMC/sodium/releases/download/sodium-${{ github.sha }}/sodium-neoforge.jar)
-
-            ### Build Information
-
-            - **Minecraft Version**: 26.3
-            - **Mod Version**: 0.9.3-alpha.1
-            - **Platform**: ${{ inputs.platform == 'both' && 'Fabric & NeoForge' || inputs.platform == 'fabric' && 'Fabric' || 'NeoForge' }}
-            - **Build Date**: ${{ github.run_date }}
-            - **Commit**: ${{ github.sha }}
-
+            Position is packed into a single 32-bit attribute (X|Y|Z), reducing the
+            per-vertex stride from 20 to 16 bytes. Colour, texture and light attributes
+            are unchanged.
+          files: dist/*.jar
           draft: false
-          prerelease: ${{ inputs.release-type != 'stable' }}
-
-      - name: Set release version
-        if: github.ref == 'refs/heads/main'
-        run: |
-          # Determine version based on release type
-          if [[ "${{ inputs.release-type }}" == "stable" ]]; then
-            echo "version=stable" >> $GITHUB_ENV
-          elif [[ "${{ inputs.release-type }}" == "beta" ]]; then
-            echo "version=beta" >> $GITHUB_ENV
-          else
-            echo "version=nightly" >> $GITHUB_ENV
-          fi
-
-      - name: Upload Release Assets
-        if: github.ref == 'refs/heads/main' && env.version == 'stable'
-        uses: actions/upload-artifact@v7
-        with:
-          name: sodium-release-${{ steps.ref.outputs.branch }}
-          path: |
-            fabric-artifacts/sodium-fabric.jar
-            neoforge-artifacts/sodium-neoforge.jar
+          prerelease: ${{ steps.inputs.outputs.release_type != 'stable' }}
+          fail_on_unmatched_files: true

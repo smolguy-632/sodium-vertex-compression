@@ -9,6 +9,91 @@ base {
     archivesName = "sodium-common"
 }
 
+// ---------------------------------------------------------------------------
+// Vertex position bit-width profile (build-time toggle)
+//
+//   ./gradlew build                          -> uses vertex.bits from gradle.properties
+//   ./gradlew build -Pvertex.bits=ideal      -> 9/9/9 (vanilla-parity precision)
+//   ./gradlew build -Pvertex.bits=original   -> 5/9/5 (one stored step per block on X/Z)
+//
+// This property is the single source of truth: it is expanded into the generated
+// VertexBits java class *and* into chunk_vertex.glsl, so the encoder and the shader
+// can never disagree about the layout.
+// ---------------------------------------------------------------------------
+val vertexBitsProfile: String = (project.findProperty("vertex.bits") as String?) ?: "original"
+
+// Bit layout per profile: x | y | z
+val vertexBitLayouts = mapOf(
+    "original" to Triple(5, 9, 5),
+    "ideal" to Triple(9, 9, 9),
+)
+val vertexBits = vertexBitLayouts[vertexBitsProfile]
+    ?: throw GradleException(
+        "Unknown vertex.bits '$vertexBitsProfile'. Expected one of: ${vertexBitLayouts.keys.joinToString()}"
+    )
+
+val generatedSourcesDir = layout.buildDirectory.dir("generated/sources/vertexBits/java").get().asFile
+
+val generateVertexBits = tasks.register("generateVertexBits") {
+    val (bx, by, bz) = vertexBits
+    val outputDir = generatedSourcesDir
+    val pkgDir = File(outputDir, "net/caffeinemc/mods/sodium/client/render/chunk/vertex/format")
+
+    inputs.property("profile", vertexBitsProfile)
+    inputs.property("bits", "$bx/$by/$bz")
+    outputs.dir(outputDir)
+
+    doLast {
+        pkgDir.mkdirs()
+        File(pkgDir, "VertexBits.java").writeText(
+            """
+            package net.caffeinemc.mods.sodium.client.render.chunk.vertex.format;
+
+            /**
+             * GENERATED FILE - do not edit by hand.
+             * Produced by the Gradle task ':common:generateVertexBits' from the 'vertex.bits' property.
+             * Changing the value in gradle.properties (or -Pvertex.bits=...) regenerates this file.
+             */
+            public final class VertexBits {
+                public static final String PROFILE = "$vertexBitsProfile";
+
+                public static final int X_BITS = $bx;
+                public static final int Y_BITS = $by;
+                public static final int Z_BITS = $bz;
+
+                /** Total packed position width; must be <= 32. */
+                public static final int TOTAL_BITS = X_BITS + Y_BITS + Z_BITS;
+
+                public static final int X_SHIFT = 0;
+                public static final int Y_SHIFT = X_SHIFT + X_BITS;
+                public static final int Z_SHIFT = Y_SHIFT + Y_BITS;
+
+                public static final int X_MAX = (1 << X_BITS) - 1;
+                public static final int Y_MAX = (1 << Y_BITS) - 1;
+                public static final int Z_MAX = (1 << Z_BITS) - 1;
+
+                /** Model-space window covered by the packed position, in blocks. */
+                public static final float MODEL_ORIGIN = 8.0f;
+                public static final float MODEL_RANGE = 32.0f;
+
+                private VertexBits() {
+                }
+            }
+            """.trimIndent()
+        )
+    }
+}
+
+sourceSets {
+    named("main") {
+        java.srcDir(generatedSourcesDir)
+    }
+}
+
+tasks.named<JavaCompile>("compileJava") {
+    dependsOn(generateVertexBits)
+}
+
 val configurationPreLaunch = configurations.create("preLaunchDeps") {
     isCanBeResolved = true
 }
@@ -129,3 +214,20 @@ exportSourceSet("commonBoot", sourceSets["boot"])
 exportSourceSet("commonDesktop", sourceSets["desktop"])
 
 tasks.jar { enabled = false }
+
+// Keep the chunk vertex shader's packed-position layout in lock-step with the generated
+// VertexBits java class, so the encoder and the decoder can never drift apart.
+tasks.named<ProcessResources>("processResources") {
+    val (bx, by, bz) = vertexBits
+
+    filesMatching("**/chunk_vertex.glsl") {
+        expand(
+            "positionXBits" to bx,
+            "positionYBits" to by,
+            "positionZBits" to bz,
+            "positionXMax" to ((1 shl bx) - 1),
+            "positionYMax" to ((1 shl by) - 1),
+            "positionZMax" to ((1 shl bz) - 1),
+        )
+    }
+}

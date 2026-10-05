@@ -2,26 +2,60 @@ package net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.impl;
 
 import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.vertex.VertexFormat;
+import net.caffeinemc.mods.sodium.api.memory.MemoryIntrinsics;
 import net.caffeinemc.mods.sodium.api.util.ColorARGB;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkVertexEncoder;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkVertexType;
+import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.VertexBits;
 import net.minecraft.util.Mth;
-import net.caffeinemc.mods.sodium.api.memory.MemoryIntrinsics;
 
+/**
+ * Packed chunk vertex format.
+ *
+ * <p>The position is encoded as a single 32-bit integer that packs three fixed-width unsigned fields:
+ * {@code X_BITS | Y_BITS | Z_BITS} (least-significant field first). Because every field is a whole
+ * number of bits, the position always fits in one {@code uint32} and therefore in a 4-byte attribute,
+ * which is half the size of the previous two-{@code uint32} ({@code RG32_UINT}) attribute.
+ *
+ * <p>Every field shares one normalization window of {@link #MODEL_RANGE} blocks, matching the range the
+ * section mesher may emit (block models can extend past the 16-block section bounds). Reducing a field's
+ * bit width therefore reduces <em>precision</em> (blocks per stored step), never the representable range.
+ *
+ * <p>Two precision profiles are selectable at build time through the Gradle property
+ * {@code -Pvertex.bits=<profile>}, see {@code docs/vertex-format.md}.
+ */
 public class CompactChunkVertex implements ChunkVertexType {
-    public static final int STRIDE = 20;
+    /**
+     * Packed position bit layout, generated at build time from the {@code vertex.bits} Gradle property.
+     * See {@code buildSrc}-adjacent task {@code :common:generateVertexBits}.
+     */
+    public static final int X_BITS = VertexBits.X_BITS;
+    public static final int Y_BITS = VertexBits.Y_BITS;
+    public static final int Z_BITS = VertexBits.Z_BITS;
+
+    public static final int X_SHIFT = VertexBits.X_SHIFT;
+    public static final int Y_SHIFT = VertexBits.Y_SHIFT;
+    public static final int Z_SHIFT = VertexBits.Z_SHIFT;
+
+    public static final int X_MAX = VertexBits.X_MAX;
+    public static final int Y_MAX = VertexBits.Y_MAX;
+    public static final int Z_MAX = VertexBits.Z_MAX;
+
+    public static final int POSITION_BITS = VertexBits.TOTAL_BITS;
+
+    private static final float MODEL_ORIGIN = VertexBits.MODEL_ORIGIN;
+    private static final float MODEL_RANGE = VertexBits.MODEL_RANGE;
+
+    /** Byte stride of a single vertex. */
+    public static final int STRIDE = 16;
 
     public static final VertexFormat VERTEX_FORMAT = VertexFormat.builder(0)
-            .addAttribute("a_Position", GpuFormat.RG32_UINT)
+            .addAttribute("a_Position", GpuFormat.R32_UINT)
             .addAttribute("a_Color", GpuFormat.RGBA8_UNORM)
             .addAttribute("a_TexCoord", GpuFormat.RG16_UINT)
             .addAttribute("a_LightAndData", GpuFormat.RGBA8_UINT).build();
 
-    public static final int POSITION_MAX_VALUE = 1 << 20;
     public static final int TEXTURE_MAX_VALUE = 1 << 15;
-
-    private static final float MODEL_ORIGIN = 8.0f;
-    private static final float MODEL_RANGE = 32.0f;
 
     @Override
     public VertexFormat getVertexFormat() {
@@ -46,20 +80,17 @@ public class CompactChunkVertex implements ChunkVertexType {
             for (int i = 0; i < 4; i++) {
                 var vertex = vertices[i];
 
-                int x = quantizePosition(vertex.x);
-                int y = quantizePosition(vertex.y);
-                int z = quantizePosition(vertex.z);
+                int position = packPosition(vertex.x, vertex.y, vertex.z);
 
                 int u = encodeTexture(texCentroidU, vertex.u);
                 int v = encodeTexture(texCentroidV, vertex.v);
 
                 int light = encodeLight(vertex.light);
 
-                MemoryIntrinsics.putInt(ptr +  0L, packPositionHi(x, y, z));
-                MemoryIntrinsics.putInt(ptr +  4L, packPositionLo(x, y, z));
-                MemoryIntrinsics.putInt(ptr +  8L, ColorARGB.mulRGB(vertex.color, vertex.ao));
-                MemoryIntrinsics.putInt(ptr + 12L, packTexture(u, v));
-                MemoryIntrinsics.putInt(ptr + 16L, packLightAndData(light, materialBits, section));
+                MemoryIntrinsics.putInt(ptr +  0L, position);
+                MemoryIntrinsics.putInt(ptr +  4L, ColorARGB.mulRGB(vertex.color, vertex.ao));
+                MemoryIntrinsics.putInt(ptr +  8L, packTexture(u, v));
+                MemoryIntrinsics.putInt(ptr + 12L, packLightAndData(light, materialBits, section));
 
                 ptr += STRIDE;
             }
@@ -68,20 +99,29 @@ public class CompactChunkVertex implements ChunkVertexType {
         };
     }
 
-    private static int packPositionHi(int x, int y, int z) {
-        return  (((x >>> 10) & 0x3FF) <<  0) |
-                (((y >>> 10) & 0x3FF) << 10) |
-                (((z >>> 10) & 0x3FF) << 20);
+    /**
+     * Packs X, Y and Z into a single 32-bit integer as {@code X_BITS | Y_BITS | Z_BITS}.
+     * Identical layout to {@code _deinterleave_position()} in {@code chunk_vertex.glsl}.
+     */
+    private static int packPosition(float x, float y, float z) {
+        int px = quantizePosition(x, X_BITS, X_MAX);
+        int py = quantizePosition(y, Y_BITS, Y_MAX);
+        int pz = quantizePosition(z, Z_BITS, Z_MAX);
+
+        return (px << X_SHIFT) | (py << Y_SHIFT) | (pz << Z_SHIFT);
     }
 
-    private static int packPositionLo(int x, int y, int z) {
-        return  ((x & 0x3FF) <<  0) |
-                ((y & 0x3FF) << 10) |
-                ((z & 0x3FF) << 20);
-    }
+    private static int quantizePosition(float position, int bits, int max) {
+        float normalized = normalizePosition(position);
 
-    private static int quantizePosition(float position) {
-        return ((int) (normalizePosition(position) * POSITION_MAX_VALUE)) & 0xFFFFF;
+        // Clamp before scaling so out-of-range geometry saturates instead of wrapping around.
+        if (normalized < 0.0f) {
+            normalized = 0.0f;
+        } else if (normalized > 1.0f) {
+            normalized = 1.0f;
+        }
+
+        return Math.min((int) (normalized * max), max);
     }
 
     private static float normalizePosition(float v) {

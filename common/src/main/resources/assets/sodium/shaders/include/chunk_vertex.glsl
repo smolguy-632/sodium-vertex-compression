@@ -18,27 +18,51 @@ uint _draw_id;
 uint _material_params;
 
 #ifdef USE_VERTEX_COMPRESSION
-const uint POSITION_BITS        = 20u;
-const uint POSITION_MAX_COORD   = 1u << POSITION_BITS;
-const uint POSITION_MAX_VALUE   = POSITION_MAX_COORD - 1u;
+/**
+ * Packed position bit layout.
+ *
+ * The ${positionXBits}/${positionYBits}/${positionZBits} values are substituted at build time by
+ * ':common:processResources' from the 'vertex.bits' Gradle property, so this decoder always matches
+ * CompactChunkVertex.packPosition(). Do not edit the numbers here directly.
+ *
+ * Layout within the 32-bit word, low bits first: X, then Y, then Z.
+ */
+const uint POSITION_X_BITS    = ${positionXBits}u;
+const uint POSITION_Y_BITS    = ${positionYBits}u;
+const uint POSITION_Z_BITS    = ${positionZBits}u;
+
+const uint POSITION_X_MASK    = (1u << POSITION_X_BITS) - 1u;
+const uint POSITION_Y_MASK    = (1u << POSITION_Y_BITS) - 1u;
+const uint POSITION_Z_MASK    = (1u << POSITION_Z_BITS) - 1u;
+
+const uint POSITION_Y_SHIFT   = POSITION_X_BITS;
+const uint POSITION_Z_SHIFT   = POSITION_X_BITS + POSITION_Y_BITS;
+
+const float POSITION_X_MAX    = float(${positionXMax}u);
+const float POSITION_Y_MAX    = float(${positionYMax}u);
+const float POSITION_Z_MAX    = float(${positionZMax}u);
 
 const uint TEXTURE_BITS         = 15u;
 const uint TEXTURE_MAX_COORD    = 1u << TEXTURE_BITS;
 const uint TEXTURE_MAX_VALUE    = TEXTURE_MAX_COORD - 1u;
 
-const float VERTEX_SCALE = 32.0 / float(POSITION_MAX_COORD);
+const float VERTEX_SCALE = 32.0 / POSITION_X_MAX;
 const float VERTEX_OFFSET = -8.0;
 
-layout(location = 0) in uvec2 a_Position;
+layout(location = 0) in uint a_Position;
 layout(location = 1) in vec4 a_Color;
 layout(location = 2) in uvec2 a_TexCoord;
 layout(location = 3) in uvec4 a_LightAndData;
 
-uvec3 _deinterleave_u20x3(uvec2 data) {
-    uvec3 hi = (uvec3(data.x) >> uvec3(0u, 10u, 20u)) & 0x3FFu;
-    uvec3 lo = (uvec3(data.y) >> uvec3(0u, 10u, 20u)) & 0x3FFu;
+/**
+ * Unpacks X, Y and Z from the single 32-bit position word produced by CompactChunkVertex.packPosition().
+ */
+uvec3 _unpack_position(uint data) {
+    uint x = (data >>  0u) & POSITION_X_MASK;
+    uint y = (data >> POSITION_Y_SHIFT) & POSITION_Y_MASK;
+    uint z = (data >> POSITION_Z_SHIFT) & POSITION_Z_MASK;
 
-    return (hi << 10u) | lo;
+    return uvec3(x, y, z);
 }
 
 vec2 _get_texcoord() {
@@ -50,7 +74,10 @@ vec2 _get_texcoord_bias() {
 }
 
 void _vert_init() {
-    _vert_position = (_deinterleave_u20x3(a_Position) * VERTEX_SCALE) + VERTEX_OFFSET;
+    vec3 unpacked = vec3(_unpack_position(a_Position));
+    vec3 scale = vec3(POSITION_X_MAX, POSITION_Y_MAX, POSITION_Z_MAX);
+
+    _vert_position = (unpacked / scale) * 32.0 + VERTEX_OFFSET;
     _vert_color = a_Color;
     _vert_tex_diffuse_coord = _get_texcoord();
     _vert_tex_diffuse_coord_bias = _get_texcoord_bias();

@@ -19,29 +19,21 @@ uint _material_params;
 
 #ifdef USE_VERTEX_COMPRESSION
 /**
- * Packed position bit layout.
+ * Packed position bit layout, one width per axis.
  *
- * ShaderChunkRenderer.createShaderConstants() emits exactly one VERTEX_BITS_<X>_<Y>_<Z> define, matching
- * the "Terrain Position Precision" setting that CompactChunkVertex used to encode the mesh. Keep the two
- * sides in step: editing a width here without touching VertexPositionLayout would silently misplace terrain.
+ * ShaderChunkRenderer.applyPositionLayoutDefines() injects these three as valued defines taken from the
+ * "Position Bits" settings, and CompactChunkVertex quantized the mesh with those very same widths. Keep
+ * the two sides in step: editing a width on one side only silently misplaces terrain.
+ *
+ * They arrive as float literals, the way every valued define does, hence the uint() conversion. Should a
+ * define ever go missing, the identifier is left undeclared and the shader fails to compile, which is the
+ * intended outcome -- decoding with guessed widths would be far harder to notice than a black screen.
  *
  * Layout within the 32-bit word, low bits first: X, then Y, then Z.
  */
-#if defined(VERTEX_BITS_8_9_8)
-    const uint POSITION_X_BITS = 8u;
-    const uint POSITION_Y_BITS = 9u;
-    const uint POSITION_Z_BITS = 8u;
-#elif defined(VERTEX_BITS_9_9_9)
-    const uint POSITION_X_BITS = 9u;
-    const uint POSITION_Y_BITS = 9u;
-    const uint POSITION_Z_BITS = 9u;
-#elif defined(VERTEX_BITS_11_9_11)
-    const uint POSITION_X_BITS = 11u;
-    const uint POSITION_Y_BITS = 9u;
-    const uint POSITION_Z_BITS = 11u;
-#else
-    #error "ShaderChunkRenderer did not provide a VERTEX_BITS_<X>_<Y>_<Z> layout define"
-#endif
+const uint POSITION_X_BITS = uint(SODIUM_POSITION_X_BITS);
+const uint POSITION_Y_BITS = uint(SODIUM_POSITION_Y_BITS);
+const uint POSITION_Z_BITS = uint(SODIUM_POSITION_Z_BITS);
 
 const uint POSITION_X_MASK    = (1u << POSITION_X_BITS) - 1u;
 const uint POSITION_Y_MASK    = (1u << POSITION_Y_BITS) - 1u;

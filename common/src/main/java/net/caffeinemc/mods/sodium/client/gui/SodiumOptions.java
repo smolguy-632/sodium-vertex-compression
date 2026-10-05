@@ -55,7 +55,16 @@ public class SodiumOptions {
 
         public QuadSplittingMode quadSplittingMode = QuadSplittingMode.SAFE;
 
-        public VertexPositionLayout vertexPositionLayout = VertexPositionLayout.COMPACT;
+        // Bit widths of the packed chunk vertex position, one per axis. Kept as three plain integers so
+        // each can be bound to its own slider; positionLayout() is the single place that has to make the
+        // three of them fit inside one 32-bit word.
+        public int positionBitsX = 8;
+        public int positionBitsY = 9;
+        public int positionBitsZ = 8;
+
+        public VertexPositionLayout positionLayout() {
+            return new VertexPositionLayout(this.positionBitsX, this.positionBitsY, this.positionBitsZ);
+        }
     }
 
     public static class AdvancedSettings {

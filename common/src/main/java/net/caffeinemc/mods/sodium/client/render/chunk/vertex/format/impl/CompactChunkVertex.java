@@ -23,9 +23,9 @@ import net.minecraft.util.Mth;
  * bounds). Reducing a field's bit width therefore reduces <em>precision</em> (blocks per stored step),
  * never the representable range.
  *
- * <p>The bit layout is chosen at runtime from the "Terrain Position Precision" video setting. Each
- * encoder instance snapshots that layout so every quad written by one buffer builder is quantized
- * consistently; the shader reads the matching layout through the define emitted by
+ * <p>The bit widths are chosen at runtime from the three "Position Bits" sliders in the video settings.
+ * Each encoder instance snapshots that layout so every quad written by one buffer builder is quantized
+ * consistently; the shader reads the matching layout through the defines emitted by
  * {@code ShaderChunkRenderer.createShaderConstants()}.
  */
 public class CompactChunkVertex implements ChunkVertexType {
@@ -49,7 +49,7 @@ public class CompactChunkVertex implements ChunkVertexType {
     public ChunkVertexEncoder getEncoder() {
         // Snapshot the layout for the lifetime of this buffer builder. The setting can only change through a
         // renderer reload, which discards and rebuilds every mesh, so no single mesh ever mixes two layouts.
-        var layout = SodiumClientMod.options().performance.vertexPositionLayout;
+        var layout = SodiumClientMod.options().performance.positionLayout();
 
         return (ptr, materialBits, vertices, section) -> {
             // Calculate the center point of the texture region which is mapped to the quad

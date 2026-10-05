@@ -103,6 +103,15 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
             builder.withShaderDefine(s);
         }
 
+        // The bit widths chunk_vertex.glsl decodes with, as *valued* defines: the three position sliders
+        // make the number of possible layouts far too large for one #if branch each, and only the widths
+        // actually in use ever get compiled. They must match the layout CompactChunkVertex encoded with.
+        var layout = activePositionLayout();
+
+        builder.withShaderDefine("SODIUM_POSITION_X_BITS", layout.getXBits());
+        builder.withShaderDefine("SODIUM_POSITION_Y_BITS", layout.getYBits());
+        builder.withShaderDefine("SODIUM_POSITION_Z_BITS", layout.getZBits());
+
         if (pass.isTranslucent()) {
             builder.withShaderDefine("ALPHA_CUTOUT", 0.01f);
         } else if (pass.supportsFragmentDiscard()) {
@@ -130,6 +139,15 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
             builder.withShaderDefine(s);
         }
 
+        // The bit widths chunk_vertex.glsl decodes with, as *valued* defines: the three position sliders
+        // make the number of possible layouts far too large for one #if branch each, and only the widths
+        // actually in use ever get compiled. They must match the layout CompactChunkVertex encoded with.
+        var layout = activePositionLayout();
+
+        builder.withShaderDefine("SODIUM_POSITION_X_BITS", layout.getXBits());
+        builder.withShaderDefine("SODIUM_POSITION_Y_BITS", layout.getYBits());
+        builder.withShaderDefine("SODIUM_POSITION_Z_BITS", layout.getZBits());
+
         if (pass.isTranslucent()) {
             builder.withShaderDefine("ALPHA_CUTOUT", 0.01f);
         } else if (pass.supportsFragmentDiscard()) {
@@ -146,15 +164,11 @@ public abstract class ShaderChunkRenderer implements ChunkRenderer {
         defines.add("USE_VERTEX_COMPRESSION");
         defines.add("USE_FOG");
 
-        // Selects the bit widths that chunk_vertex.glsl decodes with. This must stay in step with the layout
-        // CompactChunkVertex used to encode the mesh currently being drawn.
-        defines.add(activePositionLayout().getShaderDefine());
-
         return defines;
     }
 
     private static VertexPositionLayout activePositionLayout() {
-        return SodiumClientMod.options().performance.vertexPositionLayout;
+        return SodiumClientMod.options().performance.positionLayout();
     }
 
     protected void begin(TerrainRenderPass pass, FogParameters parameters, GpuSampler terrainSampler, @Nullable OitStage stage) {

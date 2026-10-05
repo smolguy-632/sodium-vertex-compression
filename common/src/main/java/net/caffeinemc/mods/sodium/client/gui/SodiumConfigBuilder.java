@@ -17,7 +17,6 @@ import net.caffeinemc.mods.sodium.client.gui.options.Toggle;
 import net.caffeinemc.mods.sodium.client.gui.options.control.ControlValueFormatterImpls;
 import net.caffeinemc.mods.sodium.client.render.chunk.DeferMode;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.QuadSplittingMode;
-import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.VertexPositionLayout;
 import net.minecraft.client.*;
 import net.minecraft.client.renderer.texture.MipmapStrategy;
 import net.minecraft.client.renderer.texture.ReloadableTexture;
@@ -41,6 +40,10 @@ import java.util.Optional;
 public class SodiumConfigBuilder implements ConfigEntryPoint {
     private static final Identifier SODIUM_ICON = Identifier.fromNamespaceAndPath("sodium", "textures/gui/config-icon.png");
     private static final SodiumOptions DEFAULTS = SodiumOptions.defaults();
+
+    private static final Identifier POSITION_BITS_X = Identifier.parse("sodium:performance.position_bits_x");
+    private static final Identifier POSITION_BITS_Y = Identifier.parse("sodium:performance.position_bits_y");
+    private static final Identifier POSITION_BITS_Z = Identifier.parse("sodium:performance.position_bits_z");
 
     private final Options vanillaOpts;
     private final StorageEventHandler vanillaStorage;
@@ -688,16 +691,41 @@ public class SodiumConfigBuilder implements ConfigEntryPoint {
                 )
         );
 
+        // Three independent sliders rather than a fixed set of presets. They still pack into the same
+        // single uint32 and the same 16-byte stride, so this trades position accuracy for nothing else.
+        // Keep the three totals at or below 32 bits between them.
         performancePage.addOptionGroup(builder.createOptionGroup()
                 .addOption(
-                        builder.createEnumOption(Identifier.parse("sodium:performance.vertex_position_layout"), VertexPositionLayout.class)
+                        builder.createIntegerOption(POSITION_BITS_X)
                                 .setStorageHandler(this.sodiumStorage)
-                                .setName(Component.translatable("sodium.options.vertex_position_layout.name"))
-                                .setTooltip(Component.translatable("sodium.options.vertex_position_layout.tooltip"))
-                                // Every profile shares the same 16-byte stride, so this trades position
-                                // accuracy for nothing else; there is no performance impact to report.
-                                .setDefaultValue(DEFAULTS.performance.vertexPositionLayout)
-                                .setBinding(value -> this.sodiumOpts.performance.vertexPositionLayout = value, () -> this.sodiumOpts.performance.vertexPositionLayout)
+                                .setName(Component.translatable("sodium.options.position_bits_x.name"))
+                                .setTooltip(Component.translatable("sodium.options.position_bits_x.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.translateVariable("sodium.options.position_bits.value"))
+                                .setRange(1, 16, 1)
+                                .setDefaultValue(DEFAULTS.performance.positionBitsX)
+                                .setBinding(value -> this.sodiumOpts.performance.positionBitsX = value, () -> this.sodiumOpts.performance.positionBitsX)
+                                .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
+                )
+                .addOption(
+                        builder.createIntegerOption(POSITION_BITS_Y)
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.position_bits_y.name"))
+                                .setTooltip(Component.translatable("sodium.options.position_bits_y.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.translateVariable("sodium.options.position_bits.value"))
+                                .setRange(1, 16, 1)
+                                .setDefaultValue(DEFAULTS.performance.positionBitsY)
+                                .setBinding(value -> this.sodiumOpts.performance.positionBitsY = value, () -> this.sodiumOpts.performance.positionBitsY)
+                                .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
+                )
+                .addOption(
+                        builder.createIntegerOption(POSITION_BITS_Z)
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.position_bits_z.name"))
+                                .setTooltip(Component.translatable("sodium.options.position_bits_z.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.translateVariable("sodium.options.position_bits.value"))
+                                .setRange(1, 16, 1)
+                                .setDefaultValue(DEFAULTS.performance.positionBitsZ)
+                                .setBinding(value -> this.sodiumOpts.performance.positionBitsZ = value, () -> this.sodiumOpts.performance.positionBitsZ)
                                 .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
                 )
         );

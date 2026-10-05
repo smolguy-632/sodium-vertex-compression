@@ -1,0 +1,24 @@
+# Default: let git auto-detect text/binary
+* text=auto
+
+# The Gradle wrapper is executed directly by CI on Linux and must be LF.
+# (Windows checkouts still work; gradlew.bat is the native Windows entrypoint.)
+gradlew text eol=lf
+gradle/wrapper/gradle-wrapper.jar binary
+gradle/wrapper/gradle-wrapper.properties text eol=lf
+
+# Windows scripts need CRLF to run on Windows
+gradlew.bat text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts must stay LF or they break with bad interpreter errors on Linux
+*.sh text eol=lf
+
+# Binary assets
+*.png binary
+*.jar binary
+*.zip binary
+*.ttf binary
+*.otf binary
+*.ico binary

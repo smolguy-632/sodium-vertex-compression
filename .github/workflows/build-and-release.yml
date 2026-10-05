@@ -14,13 +14,6 @@ on:
           - fabric
           - neoforge
         default: both
-      vertex-bits:
-        type: choice
-        description: "Chunk vertex position profile (original = 5/9/5, ideal = 9/9/9)"
-        options:
-          - original
-          - ideal
-        default: original
       release-type:
         type: choice
         description: Release type
@@ -65,19 +58,12 @@ jobs:
           platform="${{ inputs.platform }}"
           if [[ -z "$platform" ]]; then platform="both"; fi
 
-          vertex_bits="${{ inputs.vertex-bits }}"
-          if [[ -z "$vertex_bits" ]]; then
-            vertex_bits="$(grep -E '^vertex\.bits=' gradle.properties | cut -d= -f2- | tr -d '[:space:]')"
-          fi
-          if [[ -z "$vertex_bits" ]]; then vertex_bits="original"; fi
-
           release_type="${{ inputs.release-type }}"
           if [[ -z "$release_type" ]]; then
             if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then release_type="nightly"; else release_type="nightly"; fi
           fi
 
           echo "platform=${platform}" >> "$GITHUB_OUTPUT"
-          echo "vertex_bits=${vertex_bits}" >> "$GITHUB_OUTPUT"
           echo "release_type=${release_type}" >> "$GITHUB_OUTPUT"
 
       # The root 'build' task writes the final mod jars into build/mods/ (see README).
@@ -86,16 +72,14 @@ jobs:
         run: |
           ./gradlew :fabric:build \
             "$GRADLE_BUILD_COMMAND" \
-            -Pbuild.release=false \
-            -Pvertex.bits="${{ steps.inputs.outputs.vertex_bits }}"
+            -Pbuild.release=false
 
       - name: Build (NeoForge)
         if: steps.inputs.outputs.platform == 'both' || steps.inputs.outputs.platform == 'neoforge'
         run: |
           ./gradlew :neoforge:build \
             "$GRADLE_BUILD_COMMAND" \
-            -Pbuild.release=false \
-            -Pvertex.bits="${{ steps.inputs.outputs.vertex_bits }}"
+            -Pbuild.release=false
 
       - name: Collect JARs
         id: collect
@@ -115,7 +99,7 @@ jobs:
           done
           shopt -u nullglob
           ls -la dist
-          echo "### Built artifacts (vertex.bits=${{ steps.inputs.outputs.vertex_bits }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Built artifacts" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           ls -1 dist >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -123,7 +107,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sodium-jars-${{ steps.inputs.outputs.vertex_bits }}
+          name: sodium-jars
           path: dist/*.jar
           if-no-files-found: error
 
@@ -131,20 +115,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: sodium-${{ github.sha }}
-          name: Sodium ${{ env.MOD_VERSION }} (${{ steps.inputs.outputs.vertex_bits }})
+          name: Sodium ${{ env.MOD_VERSION }}
           body: |
             ## Sodium ${{ env.MOD_VERSION }}
 
             | | |
             |---|---|
             | Minecraft | ${{ env.MINECRAFT_VERSION }} |
-            | Vertex position profile | `${{ steps.inputs.outputs.vertex_bits }}` |
             | Release type | ${{ steps.inputs.outputs.release_type }} |
             | Commit | `${{ github.sha }}` |
 
             Position is packed into a single 32-bit attribute (X|Y|Z), reducing the
             per-vertex stride from 20 to 16 bytes. Colour, texture and light attributes
-            are unchanged.
+            are unchanged. Precision is selectable in-game under
+            Video Settings -> Performance -> Terrain Position Precision.
           files: dist/*.jar
           draft: false
           prerelease: ${{ steps.inputs.outputs.release_type != 'stable' }}

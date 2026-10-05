@@ -6,6 +6,7 @@ import com.google.gson.GsonBuilder;
 import com.mojang.renderpearl.api.textures.FilterMode;
 import net.caffeinemc.mods.sodium.client.render.chunk.DeferMode;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.QuadSplittingMode;
+import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.VertexPositionLayout;
 import net.caffeinemc.mods.sodium.client.services.PlatformRuntimeInformation;
 import net.caffeinemc.mods.sodium.client.util.FileUtil;
 
@@ -53,6 +54,8 @@ public class SodiumOptions {
         public boolean useNoErrorGLContext = true;
 
         public QuadSplittingMode quadSplittingMode = QuadSplittingMode.SAFE;
+
+        public VertexPositionLayout vertexPositionLayout = VertexPositionLayout.COMPACT;
     }
 
     public static class AdvancedSettings {

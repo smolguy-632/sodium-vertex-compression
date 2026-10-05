@@ -17,6 +17,7 @@ import net.caffeinemc.mods.sodium.client.gui.options.Toggle;
 import net.caffeinemc.mods.sodium.client.gui.options.control.ControlValueFormatterImpls;
 import net.caffeinemc.mods.sodium.client.render.chunk.DeferMode;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.QuadSplittingMode;
+import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.VertexPositionLayout;
 import net.minecraft.client.*;
 import net.minecraft.client.renderer.texture.MipmapStrategy;
 import net.minecraft.client.renderer.texture.ReloadableTexture;
@@ -683,6 +684,20 @@ public class SodiumConfigBuilder implements ConfigEntryPoint {
                                 .setDefaultValue(DEFAULTS.performance.quadSplittingMode)
                                 .setBinding(value -> this.sodiumOpts.performance.quadSplittingMode = value, () -> this.sodiumOpts.performance.quadSplittingMode)
                                 .setEnabled(SodiumClientMod.options().debug.terrainSortingEnabled)
+                                .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
+                )
+        );
+
+        performancePage.addOptionGroup(builder.createOptionGroup()
+                .addOption(
+                        builder.createEnumOption(Identifier.parse("sodium:performance.vertex_position_layout"), VertexPositionLayout.class)
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.vertex_position_layout.name"))
+                                .setTooltip(Component.translatable("sodium.options.vertex_position_layout.tooltip"))
+                                // Every profile shares the same 16-byte stride, so this trades position
+                                // accuracy for nothing else; there is no performance impact to report.
+                                .setDefaultValue(DEFAULTS.performance.vertexPositionLayout)
+                                .setBinding(value -> this.sodiumOpts.performance.vertexPositionLayout = value, () -> this.sodiumOpts.performance.vertexPositionLayout)
                                 .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
                 )
         );

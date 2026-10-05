@@ -21,15 +21,27 @@ uint _material_params;
 /**
  * Packed position bit layout.
  *
- * The ${positionXBits}/${positionYBits}/${positionZBits} values are substituted at build time by
- * ':common:processResources' from the 'vertex.bits' Gradle property, so this decoder always matches
- * CompactChunkVertex.packPosition(). Do not edit the numbers here directly.
+ * ShaderChunkRenderer.createShaderConstants() emits exactly one VERTEX_BITS_<X>_<Y>_<Z> define, matching
+ * the "Terrain Position Precision" setting that CompactChunkVertex used to encode the mesh. Keep the two
+ * sides in step: editing a width here without touching VertexPositionLayout would silently misplace terrain.
  *
  * Layout within the 32-bit word, low bits first: X, then Y, then Z.
  */
-const uint POSITION_X_BITS    = ${positionXBits}u;
-const uint POSITION_Y_BITS    = ${positionYBits}u;
-const uint POSITION_Z_BITS    = ${positionZBits}u;
+#if defined(VERTEX_BITS_8_9_8)
+    const uint POSITION_X_BITS = 8u;
+    const uint POSITION_Y_BITS = 9u;
+    const uint POSITION_Z_BITS = 8u;
+#elif defined(VERTEX_BITS_9_9_9)
+    const uint POSITION_X_BITS = 9u;
+    const uint POSITION_Y_BITS = 9u;
+    const uint POSITION_Z_BITS = 9u;
+#elif defined(VERTEX_BITS_11_9_11)
+    const uint POSITION_X_BITS = 11u;
+    const uint POSITION_Y_BITS = 9u;
+    const uint POSITION_Z_BITS = 11u;
+#else
+    #error "ShaderChunkRenderer did not provide a VERTEX_BITS_<X>_<Y>_<Z> layout define"
+#endif
 
 const uint POSITION_X_MASK    = (1u << POSITION_X_BITS) - 1u;
 const uint POSITION_Y_MASK    = (1u << POSITION_Y_BITS) - 1u;
@@ -38,9 +50,9 @@ const uint POSITION_Z_MASK    = (1u << POSITION_Z_BITS) - 1u;
 const uint POSITION_Y_SHIFT   = POSITION_X_BITS;
 const uint POSITION_Z_SHIFT   = POSITION_X_BITS + POSITION_Y_BITS;
 
-const float POSITION_X_MAX    = float(${positionXMax}u);
-const float POSITION_Y_MAX    = float(${positionYMax}u);
-const float POSITION_Z_MAX    = float(${positionZMax}u);
+const float POSITION_X_MAX    = float(POSITION_X_MASK);
+const float POSITION_Y_MAX    = float(POSITION_Y_MASK);
+const float POSITION_Z_MAX    = float(POSITION_Z_MASK);
 
 const uint TEXTURE_BITS         = 15u;
 const uint TEXTURE_MAX_COORD    = 1u << TEXTURE_BITS;

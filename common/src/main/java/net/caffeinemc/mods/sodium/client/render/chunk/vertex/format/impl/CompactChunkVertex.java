@@ -4,9 +4,10 @@ import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.vertex.VertexFormat;
 import net.caffeinemc.mods.sodium.api.memory.MemoryIntrinsics;
 import net.caffeinemc.mods.sodium.api.util.ColorARGB;
+import net.caffeinemc.mods.sodium.client.SodiumClientMod;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkVertexEncoder;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkVertexType;
-import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.VertexBits;
+import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.VertexPositionLayout;
 import net.minecraft.util.Mth;
 
 /**
@@ -17,35 +18,17 @@ import net.minecraft.util.Mth;
  * number of bits, the position always fits in one {@code uint32} and therefore in a 4-byte attribute,
  * which is half the size of the previous two-{@code uint32} ({@code RG32_UINT}) attribute.
  *
- * <p>Every field shares one normalization window of {@link #MODEL_RANGE} blocks, matching the range the
- * section mesher may emit (block models can extend past the 16-block section bounds). Reducing a field's
- * bit width therefore reduces <em>precision</em> (blocks per stored step), never the representable range.
+ * <p>Every field shares one normalization window of {@link VertexPositionLayout#MODEL_RANGE} blocks,
+ * matching the range the section mesher may emit (block models can extend past the 16-block section
+ * bounds). Reducing a field's bit width therefore reduces <em>precision</em> (blocks per stored step),
+ * never the representable range.
  *
- * <p>Two precision profiles are selectable at build time through the Gradle property
- * {@code -Pvertex.bits=<profile>}, see {@code docs/vertex-format.md}.
+ * <p>The bit layout is chosen at runtime from the "Terrain Position Precision" video setting. Each
+ * encoder instance snapshots that layout so every quad written by one buffer builder is quantized
+ * consistently; the shader reads the matching layout through the define emitted by
+ * {@code ShaderChunkRenderer.createShaderConstants()}.
  */
 public class CompactChunkVertex implements ChunkVertexType {
-    /**
-     * Packed position bit layout, generated at build time from the {@code vertex.bits} Gradle property.
-     * See {@code buildSrc}-adjacent task {@code :common:generateVertexBits}.
-     */
-    public static final int X_BITS = VertexBits.X_BITS;
-    public static final int Y_BITS = VertexBits.Y_BITS;
-    public static final int Z_BITS = VertexBits.Z_BITS;
-
-    public static final int X_SHIFT = VertexBits.X_SHIFT;
-    public static final int Y_SHIFT = VertexBits.Y_SHIFT;
-    public static final int Z_SHIFT = VertexBits.Z_SHIFT;
-
-    public static final int X_MAX = VertexBits.X_MAX;
-    public static final int Y_MAX = VertexBits.Y_MAX;
-    public static final int Z_MAX = VertexBits.Z_MAX;
-
-    public static final int POSITION_BITS = VertexBits.TOTAL_BITS;
-
-    private static final float MODEL_ORIGIN = VertexBits.MODEL_ORIGIN;
-    private static final float MODEL_RANGE = VertexBits.MODEL_RANGE;
-
     /** Byte stride of a single vertex. */
     public static final int STRIDE = 16;
 
@@ -64,6 +47,10 @@ public class CompactChunkVertex implements ChunkVertexType {
 
     @Override
     public ChunkVertexEncoder getEncoder() {
+        // Snapshot the layout for the lifetime of this buffer builder. The setting can only change through a
+        // renderer reload, which discards and rebuilds every mesh, so no single mesh ever mixes two layouts.
+        var layout = SodiumClientMod.options().performance.vertexPositionLayout;
+
         return (ptr, materialBits, vertices, section) -> {
             // Calculate the center point of the texture region which is mapped to the quad
             float texCentroidU = 0.0f;
@@ -80,7 +67,7 @@ public class CompactChunkVertex implements ChunkVertexType {
             for (int i = 0; i < 4; i++) {
                 var vertex = vertices[i];
 
-                int position = packPosition(vertex.x, vertex.y, vertex.z);
+                int position = packPosition(layout, vertex.x, vertex.y, vertex.z);
 
                 int u = encodeTexture(texCentroidU, vertex.u);
                 int v = encodeTexture(texCentroidV, vertex.v);
@@ -101,17 +88,17 @@ public class CompactChunkVertex implements ChunkVertexType {
 
     /**
      * Packs X, Y and Z into a single 32-bit integer as {@code X_BITS | Y_BITS | Z_BITS}.
-     * Identical layout to {@code _deinterleave_position()} in {@code chunk_vertex.glsl}.
+     * Identical layout to {@code _unpack_position()} in {@code chunk_vertex.glsl}.
      */
-    private static int packPosition(float x, float y, float z) {
-        int px = quantizePosition(x, X_BITS, X_MAX);
-        int py = quantizePosition(y, Y_BITS, Y_MAX);
-        int pz = quantizePosition(z, Z_BITS, Z_MAX);
+    private static int packPosition(VertexPositionLayout layout, float x, float y, float z) {
+        int px = quantizePosition(x, layout.getXMax());
+        int py = quantizePosition(y, layout.getYMax());
+        int pz = quantizePosition(z, layout.getZMax());
 
-        return (px << X_SHIFT) | (py << Y_SHIFT) | (pz << Z_SHIFT);
+        return (px << layout.getXShift()) | (py << layout.getYShift()) | (pz << layout.getZShift());
     }
 
-    private static int quantizePosition(float position, int bits, int max) {
+    private static int quantizePosition(float position, int max) {
         float normalized = normalizePosition(position);
 
         // Clamp before scaling so out-of-range geometry saturates instead of wrapping around.
@@ -121,11 +108,13 @@ public class CompactChunkVertex implements ChunkVertexType {
             normalized = 1.0f;
         }
 
-        return Math.min((int) (normalized * max), max);
+        // Round to nearest rather than truncate. Truncation would bias every value downwards by up to a
+        // full step, which is what made the block-select outline sit a whole block away from the terrain.
+        return Math.min(Math.round(normalized * max), max);
     }
 
     private static float normalizePosition(float v) {
-        return (MODEL_ORIGIN + v) / MODEL_RANGE;
+        return (VertexPositionLayout.MODEL_ORIGIN + v) / VertexPositionLayout.MODEL_RANGE;
     }
 
     private static int packTexture(int u, int v) {

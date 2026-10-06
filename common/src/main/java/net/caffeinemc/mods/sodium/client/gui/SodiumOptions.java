@@ -63,7 +63,10 @@ public class SodiumOptions {
         public int positionBitsZ = 8;
 
         public VertexPositionLayout positionLayout() {
-            return new VertexPositionLayout(this.positionBitsX, this.positionBitsY, this.positionBitsZ);
+            // The three sliders are independent, so their sum can exceed the word (16/16/16 = 48 bits).
+            // fitWithinWord reduces the axes instead of letting the shifts overflow, which would otherwise
+            // decode every vertex to a near-constant position and leave the world invisible.
+            return VertexPositionLayout.fitWithinWord(this.positionBitsX, this.positionBitsY, this.positionBitsZ);
         }
     }
 

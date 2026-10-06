@@ -30,21 +30,31 @@ uint _material_params;
  * intended outcome -- decoding with guessed widths would be far harder to notice than a black screen.
  *
  * Layout within the 32-bit word, low bits first: X, then Y, then Z.
+ *
+ * Each axis is quantized with divisor 1 << BITS, so its values span 0 .. 2^BITS *inclusive* and need
+ * BITS + 1 bits to store. FIELD_BITS is therefore one greater than the precision setting, and it is what
+ * the masks and the shifts below must use: a mask of (1 << BITS) - 1 would truncate the top value, and a
+ * mask of 1 << BITS would select a single bit rather than the field, collapsing every vertex onto a
+ * near-constant position.
  */
 const uint POSITION_X_BITS = uint(SODIUM_POSITION_X_BITS);
 const uint POSITION_Y_BITS = uint(SODIUM_POSITION_Y_BITS);
 const uint POSITION_Z_BITS = uint(SODIUM_POSITION_Z_BITS);
 
-const uint POSITION_X_MASK    = 1u << POSITION_X_BITS;
-const uint POSITION_Y_MASK    = 1u << POSITION_Y_BITS;
-const uint POSITION_Z_MASK    = 1u << POSITION_Z_BITS;
+const uint POSITION_X_FIELD_BITS = POSITION_X_BITS + 1u;
+const uint POSITION_Y_FIELD_BITS = POSITION_Y_BITS + 1u;
+const uint POSITION_Z_FIELD_BITS = POSITION_Z_BITS + 1u;
 
-const uint POSITION_Y_SHIFT   = POSITION_X_BITS;
-const uint POSITION_Z_SHIFT   = POSITION_X_BITS + POSITION_Y_BITS;
+const uint POSITION_X_MASK    = (1u << POSITION_X_FIELD_BITS) - 1u;
+const uint POSITION_Y_MASK    = (1u << POSITION_Y_FIELD_BITS) - 1u;
+const uint POSITION_Z_MASK    = (1u << POSITION_Z_FIELD_BITS) - 1u;
 
-const float POSITION_X_MAX    = float(POSITION_X_MASK);
-const float POSITION_Y_MAX    = float(POSITION_Y_MASK);
-const float POSITION_Z_MAX    = float(POSITION_Z_MASK);
+const uint POSITION_Y_SHIFT   = POSITION_X_FIELD_BITS;
+const uint POSITION_Z_SHIFT   = POSITION_X_FIELD_BITS + POSITION_Y_FIELD_BITS;
+
+const float POSITION_X_MAX    = float(1u << POSITION_X_BITS);
+const float POSITION_Y_MAX    = float(1u << POSITION_Y_BITS);
+const float POSITION_Z_MAX    = float(1u << POSITION_Z_BITS);
 
 const uint TEXTURE_BITS         = 15u;
 const uint TEXTURE_MAX_COORD    = 1u << TEXTURE_BITS;

@@ -17,6 +17,7 @@ import net.caffeinemc.mods.sodium.client.gui.options.Toggle;
 import net.caffeinemc.mods.sodium.client.gui.options.control.ControlValueFormatterImpls;
 import net.caffeinemc.mods.sodium.client.render.chunk.DeferMode;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.QuadSplittingMode;
+import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.VertexPositionLayout;
 import net.minecraft.client.*;
 import net.minecraft.client.renderer.texture.MipmapStrategy;
 import net.minecraft.client.renderer.texture.ReloadableTexture;
@@ -693,7 +694,9 @@ public class SodiumConfigBuilder implements ConfigEntryPoint {
 
         // Three independent sliders rather than a fixed set of presets. They still pack into the same
         // single uint32 and the same 16-byte stride, so this trades position accuracy for nothing else.
-        // Keep the three totals at or below 32 bits between them.
+        // Each axis spends one bit more than its slider says (see VertexPositionLayout), so the three
+        // sliders may only total MAX_TOTAL_PRECISION_BITS; positionLayout() reduces whichever axis has to
+        // give way if they do not.
         performancePage.addOptionGroup(builder.createOptionGroup()
                 .addOption(
                         builder.createIntegerOption(POSITION_BITS_X)
@@ -701,7 +704,7 @@ public class SodiumConfigBuilder implements ConfigEntryPoint {
                                 .setName(Component.translatable("sodium.options.position_bits_x.name"))
                                 .setTooltip(Component.translatable("sodium.options.position_bits_x.tooltip"))
                                 .setValueFormatter(ControlValueFormatterImpls.translateVariable("sodium.options.position_bits.value"))
-                                .setRange(1, 16, 1)
+                                .setRange(VertexPositionLayout.MIN_AXIS_BITS, VertexPositionLayout.MAX_AXIS_BITS, 1)
                                 .setDefaultValue(DEFAULTS.performance.positionBitsX)
                                 .setBinding(value -> this.sodiumOpts.performance.positionBitsX = value, () -> this.sodiumOpts.performance.positionBitsX)
                                 .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
@@ -712,7 +715,7 @@ public class SodiumConfigBuilder implements ConfigEntryPoint {
                                 .setName(Component.translatable("sodium.options.position_bits_y.name"))
                                 .setTooltip(Component.translatable("sodium.options.position_bits_y.tooltip"))
                                 .setValueFormatter(ControlValueFormatterImpls.translateVariable("sodium.options.position_bits.value"))
-                                .setRange(1, 16, 1)
+                                .setRange(VertexPositionLayout.MIN_AXIS_BITS, VertexPositionLayout.MAX_AXIS_BITS, 1)
                                 .setDefaultValue(DEFAULTS.performance.positionBitsY)
                                 .setBinding(value -> this.sodiumOpts.performance.positionBitsY = value, () -> this.sodiumOpts.performance.positionBitsY)
                                 .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)
@@ -723,7 +726,7 @@ public class SodiumConfigBuilder implements ConfigEntryPoint {
                                 .setName(Component.translatable("sodium.options.position_bits_z.name"))
                                 .setTooltip(Component.translatable("sodium.options.position_bits_z.tooltip"))
                                 .setValueFormatter(ControlValueFormatterImpls.translateVariable("sodium.options.position_bits.value"))
-                                .setRange(1, 16, 1)
+                                .setRange(VertexPositionLayout.MIN_AXIS_BITS, VertexPositionLayout.MAX_AXIS_BITS, 1)
                                 .setDefaultValue(DEFAULTS.performance.positionBitsZ)
                                 .setBinding(value -> this.sodiumOpts.performance.positionBitsZ = value, () -> this.sodiumOpts.performance.positionBitsZ)
                                 .setFlags(OptionFlag.REQUIRES_RENDERER_RELOAD)

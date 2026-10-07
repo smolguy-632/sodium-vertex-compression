@@ -25,6 +25,7 @@ public class SodiumOptions {
 
     public final DebugSettings debug = new DebugSettings();
     public final NotificationSettings notifications = new NotificationSettings();
+    public final FxSettings fx = new FxSettings();
 
     private boolean readOnly;
 
@@ -74,6 +75,80 @@ public class SodiumOptions {
         public boolean enableMemoryTracing = false;
     }
 
+    /**
+     * Screen-space post-processing options. These drive the frame-graph pass chain added after the main pass.
+     * <p>
+     * The main render target is {@code RGBA8_UNORM}, which means the world arrives here already display-referred.
+     * Bloom therefore runs as an additive LDR effect over a 0..1 threshold, and tonemapping is off by default —
+     * applying a tonemap on top of an already-tonemapped image darkens it and kills the highlight rolloff the
+     * shaders are meant to produce.
+     */
+    public static class FxSettings {
+        /**
+         * Gson constructs instances without running field initialisers, so every field of a freshly-deserialized
+         * block that is missing from the JSON file reads as 0/false rather than as the default declared here.
+         * On the first load of a config written by an older build that would mean "bloom threshold 0", i.e. the
+         * entire screen blooming. This marker lets {@link SodiumOptions#sanitize()} tell a genuinely-zeroed value
+         * apart from an absent block and substitute the real defaults once.
+         */
+        public boolean initialized = false;
+
+        public boolean bloomEnabled = true;
+        public int bloomIntensity = 60;
+        public int bloomThreshold = 80;
+        public int bloomRadius = 4;
+
+        public boolean tonemapEnabled = false;
+        public TonemapMode tonemapMode = TonemapMode.ACES;
+        public int exposure = 100;
+
+        /**
+         * Clamps every value into the range its slider can produce, and fills in defaults for a config file that
+         * predates this block entirely. Called on every load, so a hand-edited or corrupted file cannot push the
+         * renderer into a state the settings screen has no control for.
+         */
+        void sanitize() {
+            if (!this.initialized) {
+                var defaults = new FxSettings();
+                this.bloomEnabled = defaults.bloomEnabled;
+                this.bloomIntensity = defaults.bloomIntensity;
+                this.bloomThreshold = defaults.bloomThreshold;
+                this.bloomRadius = defaults.bloomRadius;
+                this.tonemapEnabled = defaults.tonemapEnabled;
+                this.tonemapMode = defaults.tonemapMode;
+                this.exposure = defaults.exposure;
+                this.initialized = true;
+            }
+
+            this.bloomIntensity = clamp(this.bloomIntensity, 0, 200);
+            this.bloomThreshold = clamp(this.bloomThreshold, 0, 100);
+            this.bloomRadius = clamp(this.bloomRadius, 1, 8);
+            this.exposure = clamp(this.exposure, 25, 400);
+
+            if (this.tonemapMode == null) {
+                this.tonemapMode = TonemapMode.ACES;
+            }
+        }
+
+        private static int clamp(int value, int min, int max) {
+            return Math.max(min, Math.min(max, value));
+        }
+
+        /**
+         * True when at least one pass has anything to do. Used to skip adding passes to the frame graph entirely
+         * rather than adding a chain whose every shader ends up a no-op.
+         */
+        public boolean isAnyEffectActive() {
+            return this.bloomEnabled || this.tonemapEnabled;
+        }
+    }
+
+    public enum TonemapMode {
+        REINHARD,
+        ACES,
+        FILMIC
+    }
+
     public static class DebugSettings {
         public boolean terrainSortingEnabled = true;
     }
@@ -100,9 +175,16 @@ public class SodiumOptions {
             } catch (IOException e) {
                 throw new RuntimeException("Could not parse config", e);
             }
+
+            // Gson maps an empty or non-object file to null rather than throwing.
+            if (config == null) {
+                config = new SodiumOptions();
+            }
         } else {
             config = new SodiumOptions();
         }
+
+        config.sanitize();
 
         try {
             writeToDisk(config);
@@ -111,6 +193,15 @@ public class SodiumOptions {
         }
 
         return config;
+    }
+
+    /**
+     * Repairs values that could not have come from the settings screen. Gson leaves absent fields at the Java type
+     * default, so a config file written before a field existed deserializes it as 0 rather than as the intended
+     * default; ranges are clamped here so the renderer never sees a value no slider can produce.
+     */
+    private void sanitize() {
+        this.fx.sanitize();
     }
 
     private static Path getConfigPath() {

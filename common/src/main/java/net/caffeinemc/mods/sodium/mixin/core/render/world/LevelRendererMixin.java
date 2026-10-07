@@ -3,6 +3,7 @@ package net.caffeinemc.mods.sodium.mixin.core.render.world;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
+import com.mojang.blaze3d.framegraph.FrameGraphBuilder;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.textures.FilterMode;
@@ -10,6 +11,7 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.caffeinemc.mods.sodium.client.SodiumClientMod;
 import net.caffeinemc.mods.sodium.client.render.SodiumWorldRenderer;
 import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
+import net.caffeinemc.mods.sodium.client.render.fx.PostFxChain;
 import net.caffeinemc.mods.sodium.client.util.GameRendererStorage;
 import net.caffeinemc.mods.sodium.client.util.IgnoringSectionRenderDispatcher;
 import net.caffeinemc.mods.sodium.client.util.IgnoringViewArea;
@@ -73,6 +75,10 @@ public abstract class LevelRendererMixin implements LevelRendererExtension {
     @Shadow
     @Final
     private SectionOcclusionGraph sectionOcclusionGraph;
+
+    @Shadow
+    @Final
+    private LevelTargetBundle targets;
     @Mutable
     @Shadow
     @Final
@@ -204,5 +210,25 @@ public abstract class LevelRendererMixin implements LevelRendererExtension {
     @Override
     public ChunkRenderMatrices sodium$getMatrices() {
         return this.matrices;
+    }
+
+    /**
+     * Queues Sodium's screen-space FX passes on the level frame graph.
+     *
+     * <p>Injected immediately before {@code FrameGraphBuilder.execute}, which is the last
+     * point at which passes can still be added: by then the main pass and the entity outline
+     * chain have registered themselves, so these land on top of a fully rendered scene and
+     * run last.
+     *
+     * <p>No-op unless an effect is enabled, so the default configuration costs nothing.
+     */
+    @Inject(
+            method = "render",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lcom/mojang/blaze3d/framegraph/FrameGraphBuilder;execute(Lcom/mojang/blaze3d/resource/GraphicsResourceAllocator;Lcom/mojang/blaze3d/framegraph/FrameGraphBuilder$Inspector;)V",
+                    shift = At.Shift.BEFORE))
+    private void sodium$addFxPasses(CallbackInfo ci, @Local FrameGraphBuilder frame) {
+        PostFxChain.addToFrame(frame, this.targets.main);
     }
 }

@@ -135,7 +135,101 @@ public class SodiumConfigBuilder implements ConfigEntryPoint {
                         Colors.THEME, Colors.THEME_LIGHTER, Colors.THEME_DARKER))
                 .addPage(this.buildGeneralPage(builder))
                 .addPage(this.buildQualityPage(builder))
-                .addPage(this.buildPerformancePage(builder));
+                .addPage(this.buildPerformancePage(builder))
+                .addPage(this.buildEffectsPage(builder));
+    }
+
+    private OptionPageBuilder buildEffectsPage(ConfigBuilder builder) {
+        var effectsPage = builder.createOptionPage().setName(Component.translatable("sodium.options.pages.effects"));
+
+        effectsPage.addOptionGroup(builder.createOptionGroup()
+                .addOption(
+                        builder.createBooleanOption(Identifier.parse("sodium:effects.bloom"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.bloom.name"))
+                                .setTooltip(Component.translatable("sodium.options.bloom.tooltip"))
+                                .setDefaultValue(DEFAULTS.fx.bloomEnabled)
+                                .setBinding(value -> this.sodiumOpts.fx.bloomEnabled = value, () -> this.sodiumOpts.fx.bloomEnabled)
+                                .setImpact(OptionImpact.MEDIUM)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:effects.bloom_intensity"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.bloom_intensity.name"))
+                                .setTooltip(Component.translatable("sodium.options.bloom_intensity.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.percentage())
+                                .setRange(0, 200, 1)
+                                .setDefaultValue(DEFAULTS.fx.bloomIntensity)
+                                .setBinding(value -> this.sodiumOpts.fx.bloomIntensity = value, () -> this.sodiumOpts.fx.bloomIntensity)
+                                .setEnabledProvider(state -> this.sodiumOpts.fx.bloomEnabled)
+                                .setImpact(OptionImpact.LOW)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:effects.bloom_threshold"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.bloom_threshold.name"))
+                                .setTooltip(Component.translatable("sodium.options.bloom_threshold.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.percentage())
+                                .setRange(0, 100, 1)
+                                .setDefaultValue(DEFAULTS.fx.bloomThreshold)
+                                .setBinding(value -> this.sodiumOpts.fx.bloomThreshold = value, () -> this.sodiumOpts.fx.bloomThreshold)
+                                .setEnabledProvider(state -> this.sodiumOpts.fx.bloomEnabled)
+                                .setImpact(OptionImpact.LOW)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:effects.bloom_radius"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.bloom_radius.name"))
+                                .setTooltip(Component.translatable("sodium.options.bloom_radius.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.number())
+                                .setRange(1, 8, 1)
+                                .setDefaultValue(DEFAULTS.fx.bloomRadius)
+                                .setBinding(value -> this.sodiumOpts.fx.bloomRadius = value, () -> this.sodiumOpts.fx.bloomRadius)
+                                .setEnabledProvider(state -> this.sodiumOpts.fx.bloomEnabled)
+                                .setImpact(OptionImpact.LOW)
+                )
+        );
+
+        effectsPage.addOptionGroup(builder.createOptionGroup()
+                .addOption(
+                        builder.createBooleanOption(Identifier.parse("sodium:effects.tonemap"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.tonemap.name"))
+                                .setTooltip(Component.translatable("sodium.options.tonemap.tooltip"))
+                                .setDefaultValue(DEFAULTS.fx.tonemapEnabled)
+                                .setBinding(value -> this.sodiumOpts.fx.tonemapEnabled = value, () -> this.sodiumOpts.fx.tonemapEnabled)
+                                .setImpact(OptionImpact.MEDIUM)
+                )
+                .addOption(
+                        builder.createEnumOption(Identifier.parse("sodium:effects.tonemap_mode"), SodiumOptions.TonemapMode.class)
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.tonemap_mode.name"))
+                                .setTooltip(Component.translatable("sodium.options.tonemap_mode.tooltip"))
+                                .setElementNameProvider(mode -> switch (mode) {
+                                    case REINHARD -> Component.translatable("sodium.options.tonemap_mode.reinhard");
+                                    case FILMIC -> Component.translatable("sodium.options.tonemap_mode.filmic");
+                                    case ACES -> Component.translatable("sodium.options.tonemap_mode.aces");
+                                })
+                                .setDefaultValue(DEFAULTS.fx.tonemapMode)
+                                .setBinding(value -> this.sodiumOpts.fx.tonemapMode = value, () -> this.sodiumOpts.fx.tonemapMode)
+                                .setEnabledProvider(state -> this.sodiumOpts.fx.tonemapEnabled)
+                                .setImpact(OptionImpact.LOW)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:effects.exposure"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.exposure.name"))
+                                .setTooltip(Component.translatable("sodium.options.exposure.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.percentage())
+                                .setRange(25, 400, 1)
+                                .setDefaultValue(DEFAULTS.fx.exposure)
+                                .setBinding(value -> this.sodiumOpts.fx.exposure = value, () -> this.sodiumOpts.fx.exposure)
+                                .setEnabledProvider(state -> this.sodiumOpts.fx.tonemapEnabled)
+                                .setImpact(OptionImpact.LOW)
+                )
+        );
+
+        return effectsPage;
     }
 
     private OptionPageBuilder buildGeneralPage(ConfigBuilder builder) {

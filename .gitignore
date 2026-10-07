@@ -32,3 +32,9 @@ neoforge/runs
 
 # Kotlin compiler working directory
 .kotlin
+
+# decompiled reference mods
+/Luxium Let there be light-2.8.0-pre-alpha.jar_Decompiler.com/
+
+# local agent session notes
+/thoughts/

@@ -7,6 +7,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import net.caffeinemc.mods.sodium.client.SodiumClientMod;
 import net.caffeinemc.mods.sodium.client.gpu.GPULimits;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
+import net.caffeinemc.mods.sodium.client.render.fx.light.BlockLightEmitters;
 import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.impl.CompactChunkVertex;
 import net.caffeinemc.mods.sodium.client.util.FogParameters;
 import net.caffeinemc.mods.sodium.mixin.core.render.texture.TextureAtlasAccessor;
@@ -25,7 +26,15 @@ import org.lwjgl.system.MemoryUtil;
 import java.nio.ByteBuffer;
 
 public class UniformBufferManager {
-    private static final int GLOBAL_UNIFORM_SIZE = 256;
+    /**
+     * Stride of one {@link GlobalUniforms} record, matching the {@code u_Globals} std140 block in
+     * shaders/include/globals.glsl.
+     *
+     * <p>BlockLightTest's emitter arrays lead the block so that every field after them keeps a
+     * naturally 16-byte aligned offset: 192 + 192 + 4 for the arrays and count, then 16 bytes of
+     * padding before the first matrix, then 184 bytes of fog and texture data.
+     */
+    private static final int GLOBAL_UNIFORM_SIZE = 592;
     private static final int INITIAL_GLOBAL_UNIFORM_CAPACITY = 8;
     private static final int TIME_BUFFER_SIZE_PER_REGION = RenderRegion.REGION_SIZE * Integer.BYTES;
 
@@ -110,6 +119,12 @@ public class UniformBufferManager {
                 .getTextureManager()
                 .getTexture(TextureAtlas.LOCATION_BLOCKS);
 
+        // BlockLightTest travels in the same per-frame block as the globals, so the emitters are
+        // packed here where the model-view matrix is already in hand.
+        float[] blockLightEmitters = new float[BlockLightEmitters.MAX_EMITTERS * 4];
+        float[] blockLightColors = new float[BlockLightEmitters.MAX_EMITTERS * 4];
+        int blockLightCount = BlockLightEmitters.pack(blockLightEmitters, blockLightColors, matrices.modelView());
+
         this.uniformData = this.uniformStorage.writeData(new GlobalUniforms(
                 new Matrix4f(matrices.projection()),
                 new Matrix4f(matrices.modelView()),
@@ -120,7 +135,8 @@ public class UniformBufferManager {
                 (float) (subTexelOffset - (((1.0D / textureAtlas.sodium$getWidth()) / subTexelPrecision))),
                 (float) (subTexelOffset - (((1.0D / textureAtlas.sodium$getHeight()) / subTexelPrecision))),
                 (float) (1.0 / (Minecraft.getInstance().options.chunkSectionFadeInTime().get() * 1000.0)),
-                Minecraft.getInstance().options.textureFiltering().get() == TextureFilteringMethod.RGSS ? 1 : 0
+                Minecraft.getInstance().options.textureFiltering().get() == TextureFilteringMethod.RGSS ? 1 : 0,
+                blockLightEmitters, blockLightColors, blockLightCount
         ));
     }
 
@@ -199,11 +215,33 @@ public class UniformBufferManager {
             float subTexelOffsetX,
             float subTexelOffsetY,
             float fadeInFactor,
-            int useRgbaTextureFiltering
+            int useRgbaTextureFiltering,
+            float[] blockLightEmitters,
+            float[] blockLightColors,
+            int blockLightCount
     ) implements DynamicGpuDataStorage.DynamicGpuData {
         @Override
         public void write(@NonNull ByteBuffer byteBuffer) {
-            Std140Builder.intoBuffer(byteBuffer)
+            Std140Builder builder = Std140Builder.intoBuffer(byteBuffer);
+
+            // Must stay in step with the u_Globals declaration in shaders/include/globals.glsl:
+            // the emitter arrays come first so the matrices keep a 16-byte aligned offset.
+            for (int i = 0; i < BlockLightEmitters.MAX_EMITTERS; i++) {
+                int base = i * 4;
+
+                builder.putVec4(this.blockLightEmitters[base], this.blockLightEmitters[base + 1],
+                        this.blockLightEmitters[base + 2], this.blockLightEmitters[base + 3]);
+            }
+
+            for (int i = 0; i < BlockLightEmitters.MAX_EMITTERS; i++) {
+                int base = i * 4;
+
+                builder.putVec4(this.blockLightColors[base], this.blockLightColors[base + 1],
+                        this.blockLightColors[base + 2], this.blockLightColors[base + 3]);
+            }
+
+            // putMat4f re-aligns to 16 by itself, which supplies the padding after the count.
+            builder.putInt(this.blockLightCount)
                     .putMat4f(this.projection)
                     .putMat4f(this.modelView)
                     .putVec4(this.fogRed, this.fogGreen, this.fogBlue, this.fogAlpha)

@@ -94,40 +94,58 @@ public final class PostFxChain {
         int quarterWidth = Math.max(1, width / 4);
         int quarterHeight = Math.max(1, height / 4);
 
-        FramePass prefilter = frame.addPass("sodium_fx_bloom_prefilter");
-        prefilter.reads(main);
-        ResourceHandle<RenderTarget> bloomHalf = prefilter.createsInternal(
-                "sodium_fx_bloom_half", bloomTarget(halfWidth, halfHeight));
+        // The bloom passes are only worth their cost when bloom is actually on. Tonemapping alone
+        // has to reach the composite without dragging three fullscreen passes along with it.
+        final ResourceHandle<RenderTarget> bloomHandle;
 
-        FramePass blurHorizontal = frame.addPass("sodium_fx_bloom_blur_h");
-        blurHorizontal.reads(bloomHalf);
-        ResourceHandle<RenderTarget> bloomQuarterA = blurHorizontal.createsInternal(
-                "sodium_fx_bloom_quarter_a", bloomTarget(quarterWidth, quarterHeight));
+        if (settings.bloomEnabled) {
+            FramePass prefilter = frame.addPass("sodium_fx_bloom_prefilter");
+            prefilter.reads(main);
+            ResourceHandle<RenderTarget> bloomHalf = prefilter.createsInternal(
+                    "sodium_fx_bloom_half", bloomTarget(halfWidth, halfHeight));
 
-        FramePass blurVertical = frame.addPass("sodium_fx_bloom_blur_v");
-        blurVertical.reads(bloomQuarterA);
-        ResourceHandle<RenderTarget> bloomQuarterB = blurVertical.createsInternal(
-                "sodium_fx_bloom_quarter_b", bloomTarget(quarterWidth, quarterHeight));
+            FramePass blurHorizontal = frame.addPass("sodium_fx_bloom_blur_h");
+            blurHorizontal.reads(bloomHalf);
+            ResourceHandle<RenderTarget> bloomQuarterA = blurHorizontal.createsInternal(
+                    "sodium_fx_bloom_quarter_a", bloomTarget(quarterWidth, quarterHeight));
+
+            FramePass blurVertical = frame.addPass("sodium_fx_bloom_blur_v");
+            blurVertical.reads(bloomQuarterA);
+            bloomHandle = blurVertical.createsInternal(
+                    "sodium_fx_bloom_quarter_b", bloomTarget(quarterWidth, quarterHeight));
+
+            prefilter.executes(() -> chain.runPrefilter(
+                    main.get(), bloomHalf.get(), 1.0F / width, 1.0F / height, settings));
+
+            // The two blur passes share one pipeline and one shader; the axis rides along in
+            // u_Step.xy, so each pass hands its own uniform slot and its own collapsed step.
+            blurHorizontal.executes(() -> chain.runBlur(
+                    SLOT_BLUR_HORIZONTAL, bloomHalf.get(), bloomQuarterA.get(),
+                    settings.bloomRadius / (float) halfWidth, 0.0F, settings));
+
+            blurVertical.executes(() -> chain.runBlur(
+                    SLOT_BLUR_VERTICAL, bloomQuarterA.get(), bloomHandle.get(),
+                    0.0F, settings.bloomRadius / (float) quarterHeight, settings));
+        } else {
+            // No bloom chain at all. BloomSampler is still a required binding in the composite
+            // layout, so the scene target stands in for one; writeParams forces the intensity to
+            // zero, which means the shader adds a multiplied-by-zero term and changes nothing.
+            bloomHandle = null;
+        }
 
         FramePass composite = frame.addPass("sodium_fx_composite");
-        composite.reads(bloomQuarterB);
+
+        if (bloomHandle != null) {
+            composite.reads(bloomHandle);
+        }
+
         composite.readsAndWrites(main);
 
-        prefilter.executes(() -> chain.runPrefilter(
-                main.get(), bloomHalf.get(), 1.0F / width, 1.0F / height, settings));
-
-        // The two blur passes share one pipeline and one shader; the axis rides along in
-        // u_Step.xy, so each pass hands its own uniform slot and its own collapsed step.
-        blurHorizontal.executes(() -> chain.runBlur(
-                SLOT_BLUR_HORIZONTAL, bloomHalf.get(), bloomQuarterA.get(),
-                settings.bloomRadius / (float) halfWidth, 0.0F, settings));
-
-        blurVertical.executes(() -> chain.runBlur(
-                SLOT_BLUR_VERTICAL, bloomQuarterA.get(), bloomQuarterB.get(),
-                0.0F, settings.bloomRadius / (float) quarterHeight, settings));
+        final boolean bloomActive = bloomHandle != null;
 
         // Always the last pass added, so rotating here advances the ring exactly once a frame.
-        composite.executes(() -> chain.runComposite(main.get(), bloomQuarterB.get(), settings));
+        composite.executes(() -> chain.runComposite(
+                main.get(), bloomActive ? bloomHandle.get() : main.get(), settings, bloomActive));
     }
 
     private static PostFxChain getInstance() {
@@ -154,7 +172,7 @@ public final class PostFxChain {
 
     private void runPrefilter(RenderTarget input, RenderTarget output, float texelX, float texelY,
                               SodiumOptions.FxSettings settings) {
-        this.writeParams(SLOT_PREFILTER, settings, texelX, texelY);
+        this.writeParams(SLOT_PREFILTER, settings, texelX, texelY, true);
 
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
 
@@ -167,7 +185,7 @@ public final class PostFxChain {
 
     private void runBlur(int slot, RenderTarget input, RenderTarget output, float stepX, float stepY,
                          SodiumOptions.FxSettings settings) {
-        this.writeParams(slot, settings, stepX, stepY);
+        this.writeParams(slot, settings, stepX, stepY, true);
 
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
 
@@ -178,8 +196,9 @@ public final class PostFxChain {
         }
     }
 
-    private void runComposite(RenderTarget scene, RenderTarget bloom, SodiumOptions.FxSettings settings) {
-        this.writeParams(SLOT_COMPOSITE, settings, 0.0F, 0.0F);
+    private void runComposite(RenderTarget scene, RenderTarget bloom, SodiumOptions.FxSettings settings,
+                               boolean bloomActive) {
+        this.writeParams(SLOT_COMPOSITE, settings, 0.0F, 0.0F, bloomActive);
 
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
 
@@ -207,7 +226,8 @@ public final class PostFxChain {
         return pass;
     }
 
-    private void writeParams(int slot, SodiumOptions.FxSettings settings, float stepX, float stepY) {
+    private void writeParams(int slot, SodiumOptions.FxSettings settings, float stepX, float stepY,
+                              boolean bloomActive) {
         try (GpuBufferSlice.MappedView view = this.params.currentBuffer().map(false, true)) {
             ByteBuffer data = view.data();
             data.position(slot * PARAMS_BYTES);
@@ -215,7 +235,10 @@ public final class PostFxChain {
             Std140Builder builder = Std140Builder.intoBuffer(data);
             builder.putVec4(
                     settings.bloomThreshold / 100.0F,
-                    settings.bloomIntensity / 100.0F,
+                    // Forced to zero when bloom is off. The composite still binds a sampler for
+                    // it, so leaving a stale non-zero intensity here would add a brightened copy
+                    // of the scene back on top of itself every frame.
+                    bloomActive ? settings.bloomIntensity / 100.0F : 0.0F,
                     settings.bloomRadius,
                     settings.exposure / 100.0F
             );

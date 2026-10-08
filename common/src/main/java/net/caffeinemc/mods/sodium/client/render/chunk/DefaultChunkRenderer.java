@@ -7,6 +7,7 @@ import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import net.caffeinemc.mods.sodium.client.SodiumClientMod;
 import net.caffeinemc.mods.sodium.client.gpu.device.batch.MultiDrawBatch;
 import net.caffeinemc.mods.sodium.client.gpu.device.context.DrawContext;
@@ -14,6 +15,7 @@ import net.caffeinemc.mods.sodium.client.model.quad.properties.ModelQuadFacing;
 import net.caffeinemc.mods.sodium.client.render.chunk.data.SectionRenderDataStorage;
 import net.caffeinemc.mods.sodium.client.render.chunk.data.SectionRenderDataUnsafe;
 import net.caffeinemc.mods.sodium.client.render.chunk.lists.ChunkRenderList;
+import net.caffeinemc.mods.sodium.client.render.shadow.NeoSkyShadowSystem;
 import net.caffeinemc.mods.sodium.client.render.chunk.lists.ChunkRenderListIterable;
 import net.caffeinemc.mods.sodium.client.render.chunk.region.RenderRegion;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
@@ -135,6 +137,8 @@ public class DefaultChunkRenderer extends ShaderChunkRenderer {
         pass.setUniform("u_LightTex", Minecraft.getInstance().gameRenderer.lightmap(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
         pass.setUniform("u_BlockTex", renderPass.getAtlas(), terrainSampler);
 
+        this.bindNeoSkyUniforms(pass);
+
         while (iterator.hasNext()) {
             ChunkRenderList renderList = iterator.next();
 
@@ -184,6 +188,52 @@ public class DefaultChunkRenderer extends ShaderChunkRenderer {
         this.drawContext.endDraw();
 
         super.end(renderPass);
+    }
+
+    /**
+     * Binds the NeoSkyCelestia shadow block, both cascade depth maps and the light LUT.
+     *
+     * <p>Called once per terrain pass rather than once per region: all four resources are identical
+     * for every region in a frame, so rebinding them per region would be pure overhead.
+     *
+     * <p>The cascade samplers are NEAREST and clamp-to-edge, never linear. The software filter in
+     * {@code neosky_shadow.glsl} compares the stored depth as a raw float against a reconstructed
+     * receiver depth; linear filtering would interpolate between neighbouring texels and silently
+     * corrupt every comparison, which shows up as shimmering or solid-shadow artefacts rather than as
+     * an obvious failure.
+     */
+    private void bindNeoSkyUniforms(RenderPass pass) {
+        // Gate on the pipeline, not on the setting. The bound pipeline's layout either declares
+        // NEO_SKY_GROUP or it does not, and binding resources to a pipeline that has no such group is
+        // an error in its own right — just as skipping the binding on one that does is.
+        if (!this.isNeoSkyShadowPipeline()) {
+            return;
+        }
+
+        NeoSkyShadowSystem shadows = NeoSkyShadowSystem.getInstance();
+
+        pass.setUniform("u_NeoSky", shadows.uniforms().currentBuffer());
+
+        GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+
+        // A cascade whose target has not been allocated yet has no view to bind. Binding the other
+        // one in its place keeps every declared binding satisfied; the shader treats an out-of-range
+        // projection as unshadowed, so this degrades to "no shadows" rather than to garbage.
+        GpuTextureView nearDepth = shadows.near().target().view();
+        GpuTextureView farDepth = shadows.far().target().view();
+
+        pass.setUniform("u_NeoSkyNearDepth", nearDepth != null ? nearDepth : farDepth, nearest);
+        pass.setUniform("u_NeoSkyFarDepth", farDepth != null ? farDepth : nearDepth, nearest);
+
+        // The LUT is rebuilt in update() before this runs, so in practice it is always allocated here.
+        // But a pipeline that declares a binding and receives nothing for it is a hard error, not a
+        // soft one, and this method is reachable on the frame where shadows are switched on. Bind a
+        // cascade depth texture as the substitute: it satisfies the declared sampler, and the
+        // resulting light-LUT lookup is out of range and therefore ignored, so the frame renders
+        // unshadowed instead of throwing.
+        GpuTextureView lut = shadows.lut().view();
+
+        pass.setUniform("u_NeoSkyLightLut", lut != null ? lut : nearDepth, nearest);
     }
 
     @Override

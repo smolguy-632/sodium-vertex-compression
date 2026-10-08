@@ -3,12 +3,21 @@
 #include <sodium:globals.glsl>
 #include <sodium:fog.glsl>
 #include <sodium:chunk_material.glsl>
+#include <sodium:blocklighttest.glsl>
+#ifdef NEO_SKY_SHADOWS
+#include <sodium:neosky_shadow.glsl>
+#endif
 #include <minecraft:oit.glsl>
 
 layout(location = 0) in vec4 v_Color; // The interpolated vertex color
 layout(location = 1) in vec2 v_TexCoord; // The interpolated block texture coordinates
 layout(location = 2) in vec2 v_FragDistance; // The fragment's distance from the camera (cylindrical and spherical)
 layout(location = 3) in float fadeFactor;
+layout(location = 4) in vec3 v_BtViewPos; // BlockLightTest: view-space position
+layout(location = 5) in float v_BtBlockLight; // BlockLightTest: vanilla block-light level, 0..1
+#ifdef NEO_SKY_SHADOWS
+layout(location = 6) in vec3 v_NeoSkyPos; // NeoSkyCelestia: camera-relative world position
+#endif
 
 uniform sampler2D u_BlockTex; // The block texture
 
@@ -106,8 +115,29 @@ void main() {
 #endif
 
     #ifdef OIT_ALPHA_ONLY
+    // This pass only contributes coverage. The alpha colour target discards rgb, so running the
+    // emitter loop here would pay for 12 light evaluations that are thrown away.
     executeAlphaOnlyPhase(gl_FragCoord.z, color.a);
     #else
+    // BlockLightTest. v_Color already carries the full vanilla sky+block lightmap, so the emitter
+    // light is added on top of it rather than replacing it; see bt_local_light for why.
+    vec3 btLight = bt_local_light(v_BtBlockLight, v_BtViewPos, bt_view_normal(v_BtViewPos));
+    color.rgb *= min(vec3(1.0) + btLight, vec3(1.6));
+
+    #ifdef NEO_SKY_SHADOWS
+    // NeoSkyCelestia. The visibility term only attenuates the *direct* light: shadowed surfaces keep
+    // the ambient floor rather than going black, which is what stops shadow interiors reading as
+    // holes in the world. v_Color already carries the vanilla lightmap, so this scales the whole
+    // term rather than replacing it.
+    int neoskySamples = int(u_NeoSkyBlend.z);
+    float neoskyVisibility = neosky_shadow_visibility(v_NeoSkyPos, neoskySamples);
+
+    // Remap 0..1 visibility onto a darkening factor: a fully shadowed surface keeps `ambient`
+    // worth of its previous brightness rather than dropping to zero.
+    float neoskyLightFactor = mix(1.0 - u_NeoSkyAmbient.a, 1.0, neoskyVisibility);
+    color.rgb *= neoskyLightFactor;
+    #endif
+
     fragColor = calculateFinalColor(color);
     #endif
 }

@@ -135,8 +135,9 @@ public class SodiumConfigBuilder implements ConfigEntryPoint {
                         Colors.THEME, Colors.THEME_LIGHTER, Colors.THEME_DARKER))
                 .addPage(this.buildGeneralPage(builder))
                 .addPage(this.buildQualityPage(builder))
-                .addPage(this.buildPerformancePage(builder))
-                .addPage(this.buildEffectsPage(builder));
+.addPage(this.buildPerformancePage(builder))
+        .addPage(this.buildEffectsPage(builder))
+        .addPage(this.buildCelestialShadowsPage(builder));
     }
 
     private OptionPageBuilder buildEffectsPage(ConfigBuilder builder) {
@@ -230,6 +231,175 @@ public class SodiumConfigBuilder implements ConfigEntryPoint {
         );
 
         return effectsPage;
+    }
+
+    /**
+     * NeoSkyCelestia directional shadows.
+     *
+     * <p>Kept on its own page rather than folded into Effects because the knobs are strongly
+     * interdependent: resolution and radius trade texel density against coverage, and the near/far
+     * relationship is enforced in code. Putting them together on the Effects page would invite
+     * combinations that look plausible and render worse than either end of the range.
+     */
+    private OptionPageBuilder buildCelestialShadowsPage(ConfigBuilder builder) {
+        var page = builder.createOptionPage()
+                .setName(Component.translatable("sodium.options.pages.celestial_shadows"));
+
+        page.addOptionGroup(builder.createOptionGroup()
+                .addOption(
+                        builder.createBooleanOption(Identifier.parse("sodium:celestial_shadows.enabled"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.enabled.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.enabled.tooltip"))
+                                .setDefaultValue(DEFAULTS.skyShadows.enabled)
+                                .setBinding(value -> this.sodiumOpts.skyShadows.enabled = value,
+                                        () -> this.sodiumOpts.skyShadows.enabled)
+                                // The caster pass is a second terrain draw, so this is the single most
+                                // expensive option in Sodium's settings.
+                                .setImpact(OptionImpact.HIGH)
+                )
+                .addOption(
+                        builder.createBooleanOption(Identifier.parse("sodium:celestial_shadows.colors"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.colors.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.colors.tooltip"))
+                                .setDefaultValue(DEFAULTS.skyShadows.colorsEnabled)
+                                .setBinding(value -> this.sodiumOpts.skyShadows.colorsEnabled = value,
+                                        () -> this.sodiumOpts.skyShadows.colorsEnabled)
+                                .setEnabledProvider(state -> this.sodiumOpts.skyShadows.enabled)
+                                .setImpact(OptionImpact.LOW)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:celestial_shadows.filter_samples"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.filter_samples.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.filter_samples.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.number())
+                                // Only two settings exist: the shader has a 1-tap and a 4-tap path and
+                                // nothing in between, so a continuous slider would be a lie.
+                                .setRange(1, 4, 3)
+                                .setDefaultValue(DEFAULTS.skyShadows.filterSamples)
+                                .setBinding(value -> this.sodiumOpts.skyShadows.filterSamples = value,
+                                        () -> this.sodiumOpts.skyShadows.filterSamples)
+                                .setEnabledProvider(state -> this.sodiumOpts.skyShadows.enabled)
+                                .setImpact(OptionImpact.MEDIUM)
+                )
+        );
+
+        page.addOptionGroup(builder.createOptionGroup()
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:celestial_shadows.near_resolution"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.near_resolution.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.near_resolution.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.number())
+                                .setRange(256, 8192, 256)
+                                .setDefaultValue(DEFAULTS.skyShadows.nearResolution)
+                                .setBinding(value -> this.sodiumOpts.skyShadows.nearResolution = value,
+                                        () -> this.sodiumOpts.skyShadows.nearResolution)
+                                .setEnabledProvider(state -> this.sodiumOpts.skyShadows.enabled)
+                                .setImpact(OptionImpact.HIGH)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:celestial_shadows.near_radius"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.near_radius.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.near_radius.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.number())
+                                .setRange(8, 512, 1)
+                                .setDefaultValue((int) DEFAULTS.skyShadows.nearRadius)
+                                .setBinding(value -> this.sodiumOpts.skyShadows.nearRadius = value,
+                                        () -> (int) this.sodiumOpts.skyShadows.nearRadius)
+                                .setEnabledProvider(state -> this.sodiumOpts.skyShadows.enabled)
+                                .setImpact(OptionImpact.MEDIUM)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:celestial_shadows.far_resolution"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.far_resolution.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.far_resolution.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.number())
+                                .setRange(256, 8192, 256)
+                                .setDefaultValue(DEFAULTS.skyShadows.farResolution)
+                                .setBinding(value -> this.sodiumOpts.skyShadows.farResolution = value,
+                                        () -> this.sodiumOpts.skyShadows.farResolution)
+                                .setEnabledProvider(state -> this.sodiumOpts.skyShadows.enabled)
+                                .setImpact(OptionImpact.HIGH)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:celestial_shadows.far_radius"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.far_radius.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.far_radius.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.number())
+                                .setRange(8, 2048, 1)
+                                .setDefaultValue((int) DEFAULTS.skyShadows.farRadius)
+                                .setBinding(value -> this.sodiumOpts.skyShadows.farRadius = value,
+                                        () -> (int) this.sodiumOpts.skyShadows.farRadius)
+                                .setEnabledProvider(state -> this.sodiumOpts.skyShadows.enabled)
+                                .setImpact(OptionImpact.MEDIUM)
+                )
+        );
+
+        page.addOptionGroup(builder.createOptionGroup()
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:celestial_shadows.base_bias"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.base_bias.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.base_bias.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.number())
+                                // Stored as an integer permille of the cascade's depth range: the raw
+                                // bias is a fraction of a normalised depth, far too small a number to
+                                // put on a slider directly.
+                                .setRange(0, 100, 1)
+                                .setDefaultValue((int) (DEFAULTS.skyShadows.baseBias * 1000.0F))
+                                .setBinding(value -> this.sodiumOpts.skyShadows.baseBias = value / 1000.0F,
+                                        () -> (int) (this.sodiumOpts.skyShadows.baseBias * 1000.0F))
+                                .setEnabledProvider(state -> this.sodiumOpts.skyShadows.enabled)
+                                .setImpact(OptionImpact.LOW)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:celestial_shadows.ambient"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.ambient.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.ambient.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.percentage())
+                                .setRange(0, 400, 5)
+                                .setDefaultValue((int) (DEFAULTS.skyShadows.ambientStrength * 100.0F))
+                                .setBinding(value -> this.sodiumOpts.skyShadows.ambientStrength = value / 100.0F,
+                                        () -> (int) (this.sodiumOpts.skyShadows.ambientStrength * 100.0F))
+                                .setEnabledProvider(state -> this.sodiumOpts.skyShadows.enabled)
+                                .setImpact(OptionImpact.LOW)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:celestial_shadows.sun_strength"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.sun_strength.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.sun_strength.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.percentage())
+                                .setRange(0, 400, 5)
+                                .setDefaultValue((int) (DEFAULTS.skyShadows.sunStrength * 100.0F))
+                                .setBinding(value -> this.sodiumOpts.skyShadows.sunStrength = value / 100.0F,
+                                        () -> (int) (this.sodiumOpts.skyShadows.sunStrength * 100.0F))
+                                .setEnabledProvider(state -> this.sodiumOpts.skyShadows.enabled)
+                                .setImpact(OptionImpact.LOW)
+                )
+                .addOption(
+                        builder.createIntegerOption(Identifier.parse("sodium:celestial_shadows.moon_strength"))
+                                .setStorageHandler(this.sodiumStorage)
+                                .setName(Component.translatable("sodium.options.sky_shadows.moon_strength.name"))
+                                .setTooltip(Component.translatable("sodium.options.sky_shadows.moon_strength.tooltip"))
+                                .setValueFormatter(ControlValueFormatterImpls.percentage())
+                                .setRange(0, 400, 5)
+                                .setDefaultValue((int) (DEFAULTS.skyShadows.moonStrength * 100.0F))
+                                .setBinding(value -> this.sodiumOpts.skyShadows.moonStrength = value / 100.0F,
+                                        () -> (int) (this.sodiumOpts.skyShadows.moonStrength * 100.0F))
+                                .setEnabledProvider(state -> this.sodiumOpts.skyShadows.enabled)
+                                .setImpact(OptionImpact.LOW)
+                )
+        );
+
+        return page;
     }
 
     private OptionPageBuilder buildGeneralPage(ConfigBuilder builder) {

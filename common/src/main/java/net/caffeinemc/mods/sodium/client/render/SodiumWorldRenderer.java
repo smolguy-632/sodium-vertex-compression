@@ -14,8 +14,10 @@ import net.caffeinemc.mods.sodium.client.render.chunk.map.ChunkTracker;
 import net.caffeinemc.mods.sodium.client.render.chunk.map.ChunkTrackerHolder;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
 import net.caffeinemc.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
+import net.caffeinemc.mods.sodium.client.render.shadow.NeoSkyShadowSystem;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.SortBehavior;
 import net.caffeinemc.mods.sodium.client.render.chunk.translucent_sorting.trigger.CameraMovement;
+import net.caffeinemc.mods.sodium.client.render.fx.light.BlockLightEmitters;
 import net.caffeinemc.mods.sodium.client.render.viewport.CameraTransform;
 import net.caffeinemc.mods.sodium.client.render.viewport.Viewport;
 import net.caffeinemc.mods.sodium.client.services.PlatformRuntimeInformation;
@@ -143,6 +145,11 @@ public class SodiumWorldRenderer {
             this.uniformBufferManager.delete();
             this.uniformBufferManager = null;
         }
+
+        // Releases the cascade depth targets, the LUT and the uniform ring buffer. Safe to call when
+        // the feature was never enabled: NeoSkyShadowSystem tracks whether it allocated anything, so
+        // a stock install never constructs the system just to tear down nothing.
+        NeoSkyShadowSystem.releaseIfAllocated();
     }
 
     private void unloadLevel() {
@@ -236,6 +243,13 @@ public class SodiumWorldRenderer {
         this.renderSectionManager.prepareFrame(pos);
         this.uniformBufferManager.prepareFrame();
 
+        // BlockLightTest: top up the emitter cache and rebuild the nearest set once per frame,
+        // before the terrain uniforms that carry it get written in renderLayer.
+        if (this.level != null) {
+            BlockLightEmitters.scanNearbyChunks(this.level, camera);
+            BlockLightEmitters.tick(this.level, camera, player.getInventory().getSelectedItem());
+        }
+
         if (cameraLocationChanged) {
             profiler.popPush("translucent_triggering");
 
@@ -270,6 +284,25 @@ public class SodiumWorldRenderer {
 
         this.renderSectionManager.finalizeRenderLists(camera, viewport, fogParameters, updateChunksImmediately);
 
+        profiler.popPush("neo_sky_shadows");
+
+        // NeoSkyCelestia advances exactly once per frame, here, and not from renderLayer.
+        //
+        // Two reasons, both of which were bugs before this call was moved:
+        //   - drawChunkLayer() invokes renderLayer() three times per frame (SOLID, CUTOUT,
+        //     TRANSLUCENT), so calling this from renderLayer() ran the whole cascade pipeline
+        //     three times per frame: three of everything, including six ortho matrix
+        //     compositions per frame instead of two. Only the caster render is interval-gated;
+        //     configure/resize/matrix/uniform work all ran unconditionally.
+        //   - renderLayer() executes *inside* the terrain RenderPass, and the caster pass calls
+        //     FrontendCommandEncoder.clearDepthTexture(). RenderPearl rejects nesting, which
+        //     threw "Close the existing render pass before creating a new one!" and crashed
+        //     the client on the first frame both cascades were due.
+        //
+        // Here the render lists are final (finalizeRenderLists ran above) and no RenderPass is
+        // open, so the caster pass can legally open and close its own.
+        this.updateNeoSkyShadows(new CameraTransform(pos.x(), pos.y(), pos.z()));
+
         profiler.popPush("chunk_render_tick");
 
         this.renderSectionManager.tickVisibleRenders();
@@ -282,7 +315,14 @@ public class SodiumWorldRenderer {
     private void processChunkEvents() {
         this.renderSectionManager.beforeSectionUpdates();
         var tracker = ChunkTrackerHolder.get(this.level);
-        tracker.forEachEvent(this.renderSectionManager::onChunkAdded, this.renderSectionManager::onChunkRemoved);
+
+        // forEachEvent drains its queues, so the BlockLightTest unload has to ride along in the
+        // same call rather than a second one. Loading is left to the per-frame scan, which is
+        // rate limited and so cannot afford to walk a chunk inside an event callback.
+        tracker.forEachEvent(this.renderSectionManager::onChunkAdded, (x, z) -> {
+            this.renderSectionManager.onChunkRemoved(x, z);
+            BlockLightEmitters.onChunkUnloaded(x, z);
+        });
     }
 
     /**
@@ -300,9 +340,66 @@ public class SodiumWorldRenderer {
     public void renderLayer(ChunkRenderMatrices matrices, TerrainRenderPass pass, double x, double y, double z, FogParameters fogParameters, GpuSampler terrainSampler, RenderPass renderPass, @Nullable OitStage stage) {
         this.uniformBufferManager.update(matrices, fogParameters);
 
+        CameraTransform camera = new CameraTransform(x, y, z);
+
         this.renderSectionManager.getChunkRenderer().render(matrices, this.renderSectionManager.getRenderLists(), pass,
-                new CameraTransform(x, y, z), fogParameters, this.useTranslucencySorting, renderPass,
+                camera, fogParameters, this.useTranslucencySorting, renderPass,
                 terrainSampler, this.uniformBufferManager.getUniformBuffer(), this.uniformBufferManager.getSectionTimeInfo(), stage);
+    }
+
+    /**
+     * Advances the NeoSkyCelestia shadow system for this frame.
+     *
+     * <p>Guarded by the master toggle so a stock install pays nothing: no celestial maths, no depth
+     * target allocation, no uniform upload. The {@code isActive()} check happens before
+     * {@code getInstance()} on purpose, because that call would construct the whole system —
+     * including its ring buffer — on first use even with the feature switched off.
+     *
+     * <p>Called exactly once per frame from the per-frame update, never from {@link #renderLayer}.
+     * Both constraints are load-bearing: calling it from renderLayer would run the whole cascade
+     * pipeline three times per frame and would try to open the caster pass while the terrain
+     * RenderPass is still open.
+     */
+    private void updateNeoSkyShadows(CameraTransform camera) {
+        if (!NeoSkyShadowSystem.isActive()) {
+            return;
+        }
+
+        ClientLevel level = this.level;
+        if (level == null) {
+            return;
+        }
+
+        // getSkyDarken() is an int on the vanilla 0..15 light scale here, not the 0..1 float older
+        // mappings exposed, so it is normalized rather than passed straight through.
+        float skyDarken = level.getSkyDarken() / 15.0F;
+
+        // The celestial angle is the sun's position through the day cycle. Vanilla keeps this in
+        // SkyRenderState, which is rebuilt per frame and not reachable from here, so it is derived
+        // from the level's clock instead: 24000 ticks is one full Minecraft day, matching the
+        // constant vanilla uses for the same angle.
+        float celestialAngle = celestialAngle(level);
+
+        NeoSkyShadowSystem.getInstance().update(
+                this.renderSectionManager.getRenderLists(),
+                camera,
+                celestialAngle,
+                skyDarken,
+                1.0F - skyDarken);
+    }
+
+    /** Ticks through a full Minecraft day cycle. */
+    private static final int DAY_LENGTH_TICKS = 24000;
+
+    /**
+     * Derives the 0..1 sun position through the day from the level clock.
+     *
+     * <p>Vanilla's own convention is {@code (time % 24000) / 24000}, which places the sun's zenith
+     * near 0.25 rather than 0.0; the modded {@link NeoSkyCelestialPath} offsets the sun by half a
+     * cycle for the moon on top of this, so the two together reproduce vanilla's phasing.
+     */
+    private static float celestialAngle(ClientLevel level) {
+        return (float) (level.getOverworldClockTime() % DAY_LENGTH_TICKS) / DAY_LENGTH_TICKS;
     }
 
     public void reload() {

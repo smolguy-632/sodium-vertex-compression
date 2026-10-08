@@ -8,6 +8,19 @@
 layout(location = 0) out vec4 v_Color;
 layout(location = 1) out vec2 v_TexCoord;
 
+// BlockLightTest: view-space position (camera sits at the view-space origin) and the fragment's
+// vanilla block-light level, normalized to 0..1. Every vertex of a quad belongs to one block and
+// therefore shares a light level, so a plain interpolated float carries the value exactly.
+layout(location = 4) out vec3 v_BtViewPos;
+layout(location = 5) out float v_BtBlockLight;
+
+#ifdef NEO_SKY_SHADOWS
+// NeoSkyCelestia: the fragment's camera-relative world position, which is the space the cascade
+// matrices are composed for. u_RegionOffset is already camera-relative, so `position` below is
+// exactly the coordinate the shadow lookup expects with no extra correction.
+layout(location = 6) out vec3 v_NeoSkyPos;
+#endif
+
 #ifdef USE_FOG
 layout(location = 2) out vec2 v_FragDistance;
 layout(location = 3) out float fadeFactor;
@@ -59,7 +72,20 @@ void main() {
 #endif
 
     // Transform the vertex position into model-view-projection space
-    gl_Position = u_ProjectionMatrix * u_ModelViewMatrix * vec4(position, 1.0);
+    vec4 viewPos = u_ModelViewMatrix * vec4(position, 1.0);
+    gl_Position = u_ProjectionMatrix * viewPos;
+
+    v_BtViewPos = viewPos.xyz;
+
+    #ifdef NEO_SKY_SHADOWS
+    // The cascade matrices were composed for camera-relative coordinates, and `position` is already
+    // in that frame because u_RegionOffset carries the camera subtraction.
+    v_NeoSkyPos = position;
+    #endif
+
+    // CompactChunkVertex.encodeLight() stores the block level biased into 8..248 and the vertex
+    // shader divides the raw byte by 256, so undo both steps to recover the original 0..15 level.
+    v_BtBlockLight = clamp(floor(_vert_tex_light_coord.x * 256.0 + 0.5) - 8.0, 0.0, 15.0) / 15.0;
 
     // Add the light color to the vertex color, and pass the texture coordinates to the fragment shader
 #ifndef OIT_ALPHA_ONLY

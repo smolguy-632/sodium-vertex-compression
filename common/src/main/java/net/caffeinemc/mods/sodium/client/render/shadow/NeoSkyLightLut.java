@@ -177,7 +177,7 @@ public final class NeoSkyLightLut {
         }
 
         RenderSystem.getDevice().createCommandEncoder()
-                .writeToTexture(tex, this.staging, 0, 0, 0, WIDTH, HEIGHT, 1);
+                .writeToTexture(tex, this.staging, 0, 0, 0, 0, WIDTH, HEIGHT);
     }
 
     public void close() {
